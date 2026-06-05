@@ -116,7 +116,8 @@ def _get_srgb_profile():
 class MetaNuke:
     """Nuclear-grade metadata stripper - strips EVERYTHING including color profiles."""
     
-    SUPPORTED_FORMATS = {'.jpg', '.jpeg', '.png', '.gif', '.bmp', '.tiff', '.tif', '.webp', '.svg'}
+    SUPPORTED_FORMATS = {'.jpg', '.jpeg', '.png', '.gif', '.bmp', '.tiff', '.tif', '.webp',
+                          '.svg', '.avif'}
     if HEIF_AVAILABLE:
         SUPPORTED_FORMATS.update({'.heic', '.heif'})
 
@@ -1142,7 +1143,7 @@ class MetaNukeGUI:
             self.root = tk.Tk()
         
         self.root.title("META NUKE ☢️")
-        self.root.geometry("500x480")
+        self.root.geometry("560x620")
         self.root.configure(bg='#0a0a0a')
         self.root.resizable(False, False)
 
@@ -1163,8 +1164,27 @@ class MetaNukeGUI:
         # File queue - supports multiple files for bulk processing
         self.files: list[str] = []
 
+        # User-configurable options
+        self.noise_level = tk.IntVar(value=5)
+        self.audit_logging = tk.BooleanVar(value=False)
+        self.output_dir: Optional[str] = None
+
         # Track processing state
         self.is_processing = False
+
+        # Config file path
+        self.config_path = os.path.join(
+            os.path.expanduser('~'), '.metanukerc'
+        )
+
+        # Load saved config
+        cfg = _load_config(self.config_path)
+        self.noise_level.set(cfg.get('noise_level', 5))
+        self.audit_logging.set(cfg.get('audit_log', False))
+        saved_out = cfg.get('output_dir')
+        if saved_out and os.path.isdir(saved_out):
+            self.output_dir = saved_out
+            self.out_dir_label.configure(text=saved_out, fg='#00cc66')
         
         self._setup_styles()
         self._setup_ui()
@@ -1328,7 +1348,65 @@ class MetaNukeGUI:
             self.drop_label.dnd_bind('<<Drop>>', self._on_drop)
         else:
             self.drop_label.configure(text="📁 CLICK TO SELECT IMAGES\n(supports bulk processing)")
-        
+
+        # Options panel — noise, output dir, preview, audit log
+        options_frame = tk.Frame(main_frame, bg='#0a0a0a')
+        options_frame.pack(fill='x', pady=(0, 10))
+
+        # Row 1: Noise level slider
+        noise_row = tk.Frame(options_frame, bg='#0a0a0a')
+        noise_row.pack(fill='x', pady=(2, 2))
+        tk.Label(noise_row, text="NOISE", font=('Menlo', 9, 'bold'),
+                 bg='#0a0a0a', fg='#ff6600', width=7, anchor='w').pack(side='left')
+        noise_slider = tk.Scale(noise_row, from_=0, to=10, orient='horizontal',
+                                 variable=self.noise_level, showvalue=True,
+                                 bg='#1a1a1a', fg='#cccccc', troughcolor='#333333',
+                                 highlightthickness=0, bd=0,
+                                 length=200, sliderrelief='flat',
+                                 font=('Menlo', 8))
+        noise_slider.pack(side='left', padx=(0, 5))
+        tk.Label(noise_row, text="0=lossless  10=max", font=('Menlo', 7),
+                 bg='#0a0a0a', fg='#666666').pack(side='left')
+
+        # Row 2: Output directory
+        out_row = tk.Frame(options_frame, bg='#0a0a0a')
+        out_row.pack(fill='x', pady=(2, 2))
+        tk.Label(out_row, text="OUTPUT", font=('Menlo', 9, 'bold'),
+                 bg='#0a0a0a', fg='#ff6600', width=7, anchor='w').pack(side='left')
+        self.out_dir_label = tk.Label(out_row, text="(overwrite in-place)",
+                                       font=('Menlo', 9), bg='#0a0a0a', fg='#888888',
+                                       anchor='w')
+        self.out_dir_label.pack(side='left', fill='x', expand=True)
+        tk.Button(out_row, text="BROWSE", font=('Menlo', 8),
+                  bg='#333333', fg='#cccccc', bd=0,
+                  activebackground='#555555', activeforeground='#ffffff',
+                  command=self._browse_output_dir).pack(side='right')
+        clear_out_btn = tk.Button(out_row, text="✕", font=('Menlo', 9, 'bold'),
+                                   bg='#222222', fg='#888888', bd=0,
+                                   activebackground='#444444', activeforeground='#ff0000',
+                                   command=self._clear_output_dir)
+        clear_out_btn.pack(side='right', padx=(0, 4))
+
+        # Row 3: Preview + Audit log toggle
+        opts_row = tk.Frame(options_frame, bg='#0a0a0a')
+        opts_row.pack(fill='x', pady=(2, 2))
+        self.preview_btn = tk.Button(opts_row, text="🔍 PREVIEW",
+                                      font=('Menlo', 9, 'bold'),
+                                      bg='#333333', fg='#cccccc', bd=0,
+                                      padx=8, pady=2,
+                                      activebackground='#555555',
+                                      activeforeground='#ffffff',
+                                      state='disabled',
+                                      command=self._preview_metadata)
+        self.preview_btn.pack(side='left')
+        tk.Checkbutton(opts_row, text="AUDIT LOG", font=('Menlo', 9),
+                       variable=self.audit_logging, bg='#0a0a0a',
+                       fg='#888888', selectcolor='#222222',
+                       activebackground='#0a0a0a', activeforeground='#cccccc',
+                       onvalue=True, offvalue=False).pack(side='left', padx=(10, 0))
+        tk.Label(opts_row, text=f"~/.metanukerc", font=('Menlo', 7),
+                 bg='#0a0a0a', fg='#444444').pack(side='right')
+
         # File display
         self.file_label = tk.Label(
             main_frame,
@@ -1431,8 +1509,9 @@ class MetaNukeGUI:
         if self.is_processing:
             return
 
+        all_formats = ' '.join(sorted([f'*{e}' for e in MetaNuke.SUPPORTED_FORMATS]))
         filetypes = [
-            ('Image files', '*.jpg *.jpeg *.png *.gif *.bmp *.tiff *.tif *.webp'),
+            ('Image files', all_formats),
             ('All files', '*.*'),
         ]
 
@@ -1444,6 +1523,41 @@ class MetaNukeGUI:
 
         if file_paths:
             self._set_files(list(file_paths))
+
+    def _browse_output_dir(self):
+        """Pick an output directory."""
+        d = filedialog.askdirectory(title='Select output directory')
+        if d:
+            self.output_dir = d
+            self.out_dir_label.configure(text=d, fg='#00cc66')
+
+    def _clear_output_dir(self):
+        """Reset output dir to default (overwrite in-place)."""
+        self.output_dir = None
+        self.out_dir_label.configure(text="(overwrite in-place)", fg='#888888')
+
+    def _preview_metadata(self):
+        """Show metadata for loaded files without nuking."""
+        if not self.files or self.is_processing:
+            return
+        lines = []
+        for f in self.files:
+            name = Path(f).name
+            meta = []
+            try:
+                from PIL import Image
+                with Image.open(f) as img:
+                    if img.info:
+                        meta.extend(f'{k}={str(v)[:40]}' for k, v in img.info.items())
+                raw = Path(f).read_bytes()
+                for sig, label in [(b'Exif\x00\x00', 'EXIF'), (b'<x:xmpmeta', 'XMP'),
+                                   (b'ICC_PROFILE', 'ICC')]:
+                    if sig in raw:
+                        meta.append(label)
+            except Exception as e:
+                meta.append(f'ERR:{e}')
+            lines.append(f'{name}:\n  {"  ".join(meta) if meta else "clean"}')
+        messagebox.showinfo("METADATA PREVIEW", '\n\n'.join(lines))
 
     def _on_drop_enter(self, event):
         """Highlight drop zone when a file is dragged over it.
@@ -1509,13 +1623,20 @@ class MetaNukeGUI:
             self._set_files(file_paths)
 
     def _set_files(self, file_paths: list[str]):
-        """Set multiple files for bulk processing."""
+        """Set multiple files for bulk processing. Expands directories."""
         valid_files = []
         skipped = 0
 
         for file_path in file_paths:
             if not os.path.exists(file_path):
                 skipped += 1
+                continue
+
+            # If it's a directory, expand its contents
+            if os.path.isdir(file_path):
+                for f in sorted(Path(file_path).rglob('*')):
+                    if f.is_file() and f.suffix.lower() in MetaNuke.SUPPORTED_FORMATS:
+                        valid_files.append(str(f))
                 continue
 
             ext = Path(file_path).suffix.lower()
@@ -1544,6 +1665,7 @@ class MetaNukeGUI:
             self.drop_label.configure(text=f"✓ {count} FILES LOADED", fg='#00ff00')
 
         self._set_nuke_button_state('normal')
+        self.preview_btn.configure(state='normal')
         self._drop_zone_state = 'loaded'
         self._draw_drop_zone_border()
 
@@ -1559,13 +1681,31 @@ class MetaNukeGUI:
             return
 
         total_files = len(self.files)
+        noise_lvl = self.noise_level.get()
+        use_audit = self.audit_logging.get()
 
         # Build confirmation message
+        opts_parts = []
+        if noise_lvl == 0:
+            opts_parts.append("lossless (no noise)")
+        else:
+            opts_parts.append(f"noise level {noise_lvl}")
+        if self.output_dir:
+            opts_parts.append(f"output: {os.path.basename(self.output_dir)}")
+        opts_str = ' | '.join(opts_parts)
+
         if total_files == 1:
             filename = Path(self.files[0]).name
-            confirm_msg = f"☢️ NUKE ALL METADATA FROM:\n\n{filename}\n\nThis will PERMANENTLY overwrite the file.\nThe image will look the same but ALL metadata will be destroyed.\n\nProceed?"
+            confirm_msg = (f"☢️ NUKE ALL METADATA FROM:\n\n{filename}\n"
+                           f"[{opts_str}]\n\n"
+                           f"This will PERMANENTLY overwrite the file.\n"
+                           f"The image will look the same but ALL metadata will be destroyed.\n\nProceed?")
         else:
-            confirm_msg = f"☢️ BULK NUKE - {total_files} FILES\n\nThis will PERMANENTLY overwrite ALL {total_files} files.\nAll images will look the same but ALL metadata will be destroyed.\n\n⚠️ THIS CANNOT BE UNDONE ⚠️\n\nProceed with bulk nuke?"
+            confirm_msg = (f"☢️ BULK NUKE - {total_files} FILES\n\n"
+                           f"[{opts_str}]\n\n"
+                           f"This will PERMANENTLY overwrite ALL {total_files} files.\n"
+                           f"All images will look the same but ALL metadata will be destroyed.\n"
+                           f"\n⚠️ THIS CANNOT BE UNDONE ⚠️\n\nProceed with bulk nuke?")
 
         if not messagebox.askyesno("CONFIRM NUKE", confirm_msg, icon='warning'):
             self._update_status("ABORTED", '#ffaa00')
@@ -1574,13 +1714,42 @@ class MetaNukeGUI:
         # Set processing state
         self.is_processing = True
         self._set_nuke_button_state('disabled')
+        self.preview_btn.configure(state='disabled')
         self._drop_zone_state = 'processing'
         self._draw_drop_zone_border()
+
+        # Create output dir label
+        if self.output_dir:
+            os.makedirs(self.output_dir, exist_ok=True)
 
         # Track results
         success_count = 0
         fail_count = 0
         failed_files = []
+        results = []
+
+        # Progress bar widget
+        progress_frame = tk.Frame(self.root, bg='#0a0a0a')
+        progress_frame.pack(fill='x', padx=20, pady=(0, 10), before=self.status_label.master)
+        prog_label = tk.Label(progress_frame, text="", font=('Menlo', 8),
+                              bg='#0a0a0a', fg='#cccccc')
+        prog_label.pack()
+        prog_canvas = tk.Canvas(progress_frame, bg='#1a1a1a', height=16,
+                                 highlightthickness=1, highlightbackground='#333333')
+        prog_canvas.pack(fill='x')
+
+        def _draw_progress(current, total):
+            prog_canvas.delete('all')
+            if total > 0:
+                w = prog_canvas.winfo_width()
+                fw = max(2, int(w * current / total))
+                prog_canvas.create_rectangle(0, 0, fw, 16, fill='#cc0000',
+                                              outline='', tags='bar')
+                prog_canvas.create_text(w // 2, 8, text=f"{current}/{total}",
+                                         fill='#ffffff', font=('Menlo', 8, 'bold'))
+
+        _draw_progress(0, total_files)
+        self.root.update()
 
         # Process each file
         for i, file_path in enumerate(self.files, 1):
@@ -1590,11 +1759,21 @@ class MetaNukeGUI:
             self._update_status(f"NUKING {i}/{total_files}", '#ff3300')
             self.file_label.configure(text=f"☢️ {filename}", fg='#ffaa00')
             self.drop_label.configure(text=f"Processing {i} of {total_files}...", fg='#ffaa00')
+            prog_label.configure(text=f"  {filename}")
+            _draw_progress(i - 1, total_files)
             self.root.update()
 
-            # Execute nuke
-            success, message = MetaNuke.nuke_image(file_path)
+            # Execute nuke with options
+            success, message = MetaNuke.nuke_image(
+                file_path,
+                noise_level=noise_lvl,
+                output_path=(
+                    str(Path(self.output_dir) / Path(file_path).name)
+                    if self.output_dir else None
+                ),
+            )
 
+            results.append((file_path, success, message))
             if success:
                 success_count += 1
             else:
@@ -1602,46 +1781,66 @@ class MetaNukeGUI:
                 failed_files.append((filename, message))
 
         # Processing complete
+        _draw_progress(total_files, total_files)
+        progress_frame.destroy()
         self.is_processing = False
 
-        # Show results
-        if fail_count == 0:
-            # All successful
-            self._update_status("☢️ ALL NUKED ☢️", '#00ff00')
-            self.drop_label.configure(text="✓ ALL METADATA DESTROYED", fg='#00ff00')
-
-            if total_files == 1:
-                result_msg = f"☢️ METADATA DESTROYED ☢️\n\n{Path(self.files[0]).name}\n\nAll metadata has been permanently stripped."
-            else:
-                result_msg = f"☢️ BULK NUKE COMPLETE ☢️\n\n✓ {success_count} files successfully nuked\n\nAll metadata has been permanently stripped from all files.\n\n100% FORENSICALLY CLEAN"
-
-            messagebox.showinfo("NUKE COMPLETE", result_msg)
+        # Audit log
+        if use_audit:
+            log_path = os.path.join(
+                self.output_dir if self.output_dir else os.path.dirname(self.files[0]),
+                'metanuke.log',
+            )
+            _log_results(log_path, results)
+            self._update_status(f"LOGGED: {os.path.basename(log_path)}", '#00ccff')
         else:
-            # Some failures
-            if success_count > 0:
-                self._update_status(f"PARTIAL: {success_count}✓ {fail_count}✗", '#ffaa00')
-            else:
-                self._update_status("ALL FAILED", '#ff0000')
+            self._update_status("☢️ ALL NUKED ☢️" if fail_count == 0
+                                else f"PARTIAL: {success_count}✓ {fail_count}✗",
+                                '#00ff00' if fail_count == 0 else '#ffaa00')
+        self.drop_label.configure(
+            text="✓ ALL METADATA DESTROYED" if fail_count == 0
+            else f"✓ {success_count} / ✗ {fail_count}",
+            fg='#00ff00' if fail_count == 0 else '#ffaa00',
+        )
 
-            # Build failure report
-            fail_report = "\n".join([f"• {f}: {m}" for f, m in failed_files[:10]])
-            if len(failed_files) > 10:
-                fail_report += f"\n... and {len(failed_files) - 10} more"
+        # Build result message with SHA256
+        sha_lines = []
+        for p, s, m in results[:20]:
+            status = "✓" if s else "✗"
+            short = m[:80]
+            sha_lines.append(f"  {status} {Path(p).name} — {short}")
+        if len(results) > 20:
+            sha_lines.append(f"  ... and {len(results) - 20} more")
 
-            result_msg = f"☢️ BULK NUKE RESULTS ☢️\n\n✓ Success: {success_count}\n✗ Failed: {fail_count}\n\nFailed files:\n{fail_report}"
-            messagebox.showwarning("NUKE RESULTS", result_msg)
+        summary = (f"☢️ {'BULK ' if total_files > 1 else ''}NUKE RESULTS ☢️\n\n"
+                   f"✓ {success_count}  ✗ {fail_count}  of {total_files}\n\n"
+                   + '\n'.join(sha_lines))
+
+        messagebox.showinfo("NUKE COMPLETE", summary)
+
+        # Save config (preferences persist between sessions)
+        _save_config({
+            'noise_level': self.noise_level.get(),
+            'output_dir': self.output_dir,
+            'audit_log': self.audit_logging.get(),
+        }, self.config_path)
 
         # Reset for next batch
         self.files = []
         self.file_label.configure(text="No file selected", fg='#ffffff')
         self._set_nuke_button_state('disabled')
+        self.preview_btn.configure(state='disabled')
         self._drop_zone_state = 'default'
         self._draw_drop_zone_border()
 
         if DND_AVAILABLE:
-            self.drop_label.configure(text="📁 DROP IMAGE(S) HERE\nor click to browse\n(supports bulk processing)", fg='#cccccc')
+            self.drop_label.configure(
+                text="📁 DROP IMAGE(S) HERE\nor click to browse\n(supports bulk processing)",
+                fg='#cccccc')
         else:
-            self.drop_label.configure(text="📁 CLICK TO SELECT IMAGES\n(supports bulk processing)", fg='#cccccc')
+            self.drop_label.configure(
+                text="📁 CLICK TO SELECT IMAGES\n(supports bulk processing)",
+                fg='#cccccc')
     
     def _update_status(self, text: str, color: str):
         """Update status label."""
@@ -1728,6 +1927,36 @@ def _collect_files(paths, recursive=False):
     return files
 
 
+def _load_config(path: str = None) -> dict:
+    """Load user config from ~/.metanukerc (JSON)."""
+    if path is None:
+        path = os.path.join(os.path.expanduser('~'), '.metanukerc')
+    defaults = {'noise_level': 5, 'output_dir': None, 'audit_log': False}
+    if not os.path.exists(path):
+        return defaults
+    try:
+        import json
+        with open(path) as f:
+            cfg = json.load(f)
+        for k in defaults:
+            cfg.setdefault(k, defaults[k])
+        return cfg
+    except Exception:
+        return defaults
+
+
+def _save_config(cfg: dict, path: str = None):
+    """Save user config to ~/.metanukerc (JSON)."""
+    if path is None:
+        path = os.path.join(os.path.expanduser('~'), '.metanukerc')
+    try:
+        import json
+        with open(path, 'w') as f:
+            json.dump(cfg, f, indent=2)
+    except Exception:
+        pass
+
+
 def _log_results(log_path: str, results: list):
     """Append audit log entry."""
     from datetime import datetime
@@ -1788,6 +2017,8 @@ def main():
                         help='Suppress the ASCII banner')
     parser.add_argument('--gui', action='store_true',
                         help='Force GUI mode (with optional file arguments)')
+    parser.add_argument('--json', action='store_true',
+                        help='Output results as JSON (machine-readable)')
 
     args = parser.parse_args()
 
@@ -1830,18 +2061,19 @@ def main():
     if not args.no_banner:
         _print_banner()
 
-    # Progress bar support (tqdm optional)
-    try:
-        from tqdm import tqdm
-        progress = tqdm(total=len(all_files), unit='file', bar_format='{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}]')
-        use_tqdm = True
-    except ImportError:
-        progress = None
-        use_tqdm = False
+    # Progress bar support (tqdm optional, suppressed for --json)
+    use_tqdm = False
+    if not args.json:
+        try:
+            from tqdm import tqdm
+            progress = tqdm(total=len(all_files), unit='file', bar_format='{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}]')
+            use_tqdm = True
+        except ImportError:
+            progress = None
 
     results = []
     for i, file_path in enumerate(all_files):
-        if not use_tqdm:
+        if not use_tqdm and not args.json:
             print(f"  [{i+1}/{len(all_files)}] {Path(file_path).name} ...",
                   end=" ", flush=True)
 
@@ -1861,7 +2093,7 @@ def main():
             status = "✓" if success else "✗"
             progress.set_postfix_str(f"{status} {Path(file_path).name}")
             progress.update(1)
-        else:
+        elif not args.json:
             status = "✓" if success else "✗"
             print(f"{status}  {message}")
 
@@ -1875,7 +2107,25 @@ def main():
     total = len(results)
     ok = sum(1 for _, s, _ in results if s)
     bad = total - ok
-    print(f"  {ok}/{total} nuked  ·  {bad} failed")
+
+    if args.json:
+        import json
+        import datetime
+        output = {
+            'tool': 'meta-nuke',
+            'version': '1.0',
+            'timestamp': datetime.datetime.now().isoformat(),
+            'total': total,
+            'success': ok,
+            'failed': bad,
+            'results': [
+                {'file': p, 'success': s, 'message': m}
+                for p, s, m in results
+            ],
+        }
+        print(json.dumps(output, indent=2))
+    else:
+        print(f"  {ok}/{total} nuked  ·  {bad} failed")
 
     # Audit log
     if args.log:

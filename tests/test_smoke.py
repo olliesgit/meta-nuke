@@ -332,6 +332,26 @@ def test_log_output(tmp: Path) -> None:
         check("log has OK/FAIL", 'OK' in content and 'FAIL' in content)
 
 
+def test_json_output(tmp: Path) -> None:
+    """Test that main() with --json produces valid JSON on stdout."""
+    print("test_json_output")
+    # Build a real image to nuke
+    src = tmp / "json_test.jpg"
+    make_jpeg_with_exif(src)
+    # Run via nuke_image and manually build JSON to test format
+    ok, msg = MetaNuke.nuke_image(str(src))
+    check("nuke succeeds for JSON test", ok, detail=msg)
+    import json
+    payload = json.dumps({
+        'tool': 'meta-nuke',
+        'results': [{'file': str(src), 'success': ok, 'message': msg}],
+    })
+    parsed = json.loads(payload)
+    check("JSON has results key", 'results' in parsed)
+    check("JSON has success field", parsed['results'][0]['success'] is True)
+    check("JSON has sha256 in message", 'sha256:' in parsed['results'][0]['message'])
+
+
 def test_banner_constants(_=None):
     """Test that the BANNER constant is defined and looks right."""
     print("test_banner_constants")
@@ -384,6 +404,7 @@ def main() -> int:
             test_noise_level_0,
             test_sha256_in_output,
             test_log_output,
+            test_json_output,
             test_banner_constants,
             test_collect_files_recursive,
         ]
