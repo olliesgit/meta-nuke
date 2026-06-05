@@ -1,12 +1,12 @@
 # META NUKE Reference
 
-Detailed architecture and verification docs. CLAUDE.md has the security invariants.
+Detailed architecture and verification docs. AGENTS.md has the security invariants.
 
 ## Code Architecture
 
-Single Python file (`meta_nuke.py`) with two classes.
+Package `metanuke/` with four modules split from the original single file.
 
-### MetaNuke (Core Engine)
+### MetaNuke (Core Engine — `metanuke/core.py`)
 
 Entry point: `nuke_image(file_path)` — orchestrates the entire stripping process.
 

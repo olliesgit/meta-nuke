@@ -5,15 +5,16 @@ Forensically-safe offline metadata stripper. Removes ALL metadata (EXIF, GPS, IC
 ## Commands
 
 ```bash
-open "Meta Nuke.app"                    # macOS app
-./run.sh                                # GUI
-./run.sh /path/to/image.jpg             # Process file
-./setup.sh                              # First-time setup (venv + deps)
+meta-nuke --help                         # CLI (pip-installed)
+python -m metanuke.cli --help            # Module
+python meta_nuke.py --help               # Legacy shim
+./run.sh                                 # GUI runner
+./setup.sh                               # First-time setup (venv + deps)
 ```
 
 ## Supported formats
 
-JPG, JPEG, PNG, GIF, BMP, TIFF, TIF, WEBP
+JPG, JPEG, PNG, GIF, BMP, TIFF, TIF, WEBP, SVG, AVIF, HEIC, HEIF, PDF
 
 ## Security invariants (non-negotiable)
 
@@ -27,13 +28,21 @@ JPG, JPEG, PNG, GIF, BMP, TIFF, TIF, WEBP
 
 ## Architecture
 
-Single file: `meta_nuke.py`. Two classes: `MetaNuke` (engine) and `MetaNukeGUI` (Tkinter UI with drag-and-drop).
+Package: `metanuke/` with four modules:
+
+- `core.py` — `MetaNuke` engine (pixel reconstruction, binary stripping, verification)
+- `gui.py` — `MetaNukeGUI` (Tkinter UI with drag-and-drop, noise slider, preview)
+- `cli.py` — `main()` entry point with argparse
+- `utils.py` — banner, config persistence, audit log, file collection, preview helpers
 
 Four-layer approach: pixel reconstruction → format-specific binary stripping → forensic countermeasures → structural verification.
 
 ## Dependencies
 
 - Pillow (>=10.0.0)
-- tkinterdnd2 (>=0.3.0, optional for drag-and-drop)
+- pillow-heif (optional, HEIC/HEIF)
+- PyMuPDF (optional, PDF)
+- tqdm (optional, progress bars)
+- tkinterdnd2 (optional, drag-and-drop)
 
 Full reference: `REFERENCE.md`
