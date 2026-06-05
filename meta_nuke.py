@@ -22,6 +22,8 @@ Similar to online tools like MetaClean but 100% LOCAL - never touches the networ
 DESIGNED FOR LIFE-OR-DEATH SCENARIOS WHERE FORENSIC ANALYSIS MUST FIND NOTHING.
 """
 
+import argparse
+import hashlib
 import os
 import sys
 import io
@@ -86,6 +88,18 @@ try:
 except ImportError:
     DND_AVAILABLE = False
 
+# HEIC/HEIF support via pillow-heif plugin
+try:
+    import pillow_heif
+    pillow_heif.register_heif_opener()  # registers .heic/.heif with Pillow
+    HEIF_AVAILABLE = True
+except ImportError:
+    HEIF_AVAILABLE = False
+
+# SVG support via xml.etree (stdlib, no extra deps)
+import xml.etree.ElementTree as ET
+SVG_NS = 'http://www.w3.org/2000/svg'
+
 
 # Cache the sRGB ICC profile as a module singleton. createProfile() is
 # deterministic but not free (~0.7ms on M1, plus Pillow allocates an
@@ -102,10 +116,13 @@ def _get_srgb_profile():
 class MetaNuke:
     """Nuclear-grade metadata stripper - strips EVERYTHING including color profiles."""
     
-    SUPPORTED_FORMATS = {'.jpg', '.jpeg', '.png', '.gif', '.bmp', '.tiff', '.tif', '.webp'}
+    SUPPORTED_FORMATS = {'.jpg', '.jpeg', '.png', '.gif', '.bmp', '.tiff', '.tif', '.webp', '.svg'}
+    if HEIF_AVAILABLE:
+        SUPPORTED_FORMATS.update({'.heic', '.heif'})
 
     @staticmethod
-    def nuke_image(file_path: str) -> tuple[bool, str]:
+    def nuke_image(file_path: str, noise_level: int = 5,
+                   output_path: str = None) -> tuple[bool, str]:
         """
         Completely strip ALL metadata from an image by reconstructing it from raw pixels.
         
@@ -141,6 +158,10 @@ class MetaNuke:
                 with Image.open(file_path) as probe:
                     if getattr(probe, 'n_frames', 1) > 1:
                         return MetaNuke._nuke_animated_gif(file_path)
+
+            # SVG is XML-based, not pixel-based — handle separately
+            if path.suffix.lower() == '.svg':
+                return MetaNuke._nuke_svg(file_path, output_path=output_path)
 
             # Read the original image - ONLY extract pixel data
             with Image.open(file_path) as original:
@@ -181,9 +202,11 @@ class MetaNuke:
             # that could fingerprint the image processing history.
             # Pass raw_bytes through so we don't re-call tobytes() — saves
             # ~22ms on a 4K RGB image.
-            clean_image = MetaNuke._add_forensic_noise(
-                clean_image, raw_bytes, original_mode,
-            )
+            # noise_level 0 = disabled, 5 = default, 10 = max
+            if noise_level > 0:
+                clean_image = MetaNuke._add_forensic_noise(
+                    clean_image, raw_bytes, original_mode, noise_level,
+                )
             
             # Determine output format based on extension
             ext = path.suffix.lower()
@@ -299,24 +322,113 @@ class MetaNuke:
             # Atomic write via a temp file + rename. Replacing the inode (not
             # just truncating in place) is the only way to drop SIP-protected
             # xattrs like com.apple.provenance on macOS.
+            write_path = output_path if output_path else file_path
             buffer.seek(0)
-            MetaNuke._atomic_write(file_path, buffer.read())
+            MetaNuke._atomic_write(write_path, buffer.read())
 
-            MetaNuke._strip_xattrs(file_path)
-            MetaNuke._reset_file_timestamps(file_path)
-            
-            # Verify the nuke was successful
-            success, verify_msg = MetaNuke._verify_clean(file_path)
+            # Only strip xattrs/timestamps on the original path
+            # (output dir files get fresh attributes naturally)
+            if output_path:
+                MetaNuke._strip_xattrs(write_path)
+                MetaNuke._reset_file_timestamps(write_path)
+            else:
+                MetaNuke._strip_xattrs(file_path)
+                MetaNuke._reset_file_timestamps(file_path)
+
+            # Verify the nuke was successful (on the written file)
+            success, verify_msg = MetaNuke._verify_clean(write_path)
             if not success:
                 return False, f"Verification failed: {verify_msg}"
-            
-            # Get file size for confirmation
-            final_size = os.path.getsize(file_path)
-            return True, f"NUKED: {path.name} ({final_size} bytes)"
+
+            # Get file size and SHA256 for confirmation
+            final_size = os.path.getsize(write_path)
+            final_hash = MetaNuke._sha256(write_path)
+            return True, f"NUKED: {path.name} ({final_size} bytes, sha256:{final_hash[:16]}...)"
             
         except Exception as e:
             return False, f"Error processing {file_path}: {str(e)}"
     
+    @staticmethod
+    def _sha256(file_path: str) -> str:
+        """Get SHA256 hash of a file."""
+        h = hashlib.sha256()
+        with open(file_path, 'rb', 131072) as f:
+            while True:
+                chunk = f.read(131072)
+                if not chunk:
+                    break
+                h.update(chunk)
+        return h.hexdigest()
+
+    @staticmethod
+    def _nuke_svg(file_path: str, output_path: str = None) -> tuple[bool, str]:
+        """
+        Strip metadata from an SVG by XML parsing and reconstruction.
+
+        Removes:
+          - <metadata> elements (RDF/XML metadata)
+          - XML comments (<!-- -->)
+          - XML processing instructions (<? ... ?>)
+          - Custom namespace attributes
+          - Any <desc>, <title> elements (identifying text)
+
+        Preserves all visual elements and structure.
+        """
+        try:
+            import xml.etree.ElementTree as ET
+
+            path = Path(file_path)
+            raw = path.read_text(encoding='utf-8')
+
+            # Parse the XML
+            root = ET.fromstring(raw)
+
+            # Remove <metadata> elements
+            ns = 'http://www.w3.org/2000/svg'
+            for el in list(root.iter('{http://www.w3.org/2000/svg}metadata')):
+                root.remove(el)
+            for el in list(root.iter('{http://www.w3.org/2000/svg}desc')):
+                root.remove(el)
+            for el in list(root.iter('{http://www.w3.org/2000/svg}title')):
+                root.remove(el)
+
+            # Remove xmlns:... attributes that leak app/creator info
+            # (keep the base xmlns and standard ones)
+            attribs_to_del = []
+            for attr in root.attrib:
+                if attr.startswith('xmlns:') and attr != 'xmlns':
+                    attribs_to_del.append(attr)
+                elif attr.startswith('{') and 'metadata' in attr.lower():
+                    attribs_to_del.append(attr)
+            for attr in attribs_to_del:
+                del root.attrib[attr]
+
+            # Register the SVG namespace so tags render as <rect> not <ns0:rect>
+            ET.register_namespace('', SVG_NS)
+
+            # Serialize to string (comments/processing-instructions are dropped)
+            clean_xml = ET.tostring(root, encoding='unicode',
+                                    xml_declaration=False)
+
+            # Strip XML comments and processing instructions from the raw
+            # source — ET doesn't preserve them in the parsed tree
+            import re
+            clean_xml = re.sub(r'<!--.*?-->', '', clean_xml, flags=re.DOTALL)
+            clean_xml = re.sub(r'<\?[^>]+\?>', '', clean_xml)
+
+            # Write to output path, creating parent dirs if needed
+            target = Path(output_path) if output_path else path
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(clean_xml.strip() + '\n', encoding='utf-8')
+
+            final_size = target.stat().st_size
+            return True, f"NUKED: {path.name} ({final_size} bytes)"
+
+        except ET.ParseError as e:
+            return False, f"SVG parse error: {e}"
+        except Exception as e:
+            return False, f"Error processing SVG {file_path}: {str(e)}"
+
     @staticmethod
     def _nuke_animated_gif(file_path: str) -> tuple[bool, str]:
         """
@@ -630,41 +742,48 @@ class MetaNuke:
     
     @staticmethod
     def _add_forensic_noise(image: Image.Image, raw_bytes: bytes,
-                            original_mode: str) -> Image.Image:
+                            original_mode: str,
+                            noise_level: int = 5) -> Image.Image:
         """
         FORENSIC COUNTERMEASURE: Add imperceptible noise to pixels.
 
         Defeats LSB steganography detection, statistical pixel-distribution
         analysis, and ML classifiers trained on processing fingerprints.
 
+        noise_level 0 = off (lossless), 1 = minimal, 10 = maximum.
+        Default 5 flips ~30% of pixels by ±1.
+
         Accepts pre-extracted raw_bytes to avoid a second tobytes() call.
         Uses random.randbytes() instead of os.urandom() — we don't need
         crypto-grade randomness for steganography-defeating noise, and
         randbytes() is roughly 2x faster on macOS (~85ms vs ~150ms for 36MB).
         """
-        if original_mode not in ('RGB', 'RGBA', 'L', 'LA'):
+        if original_mode not in ('RGB', 'RGBA', 'L', 'LA') or noise_level <= 0:
             return image
 
         bands = len(image.getbands())
         raw = bytearray(raw_bytes)
         num_pixels = image.size[0] * image.size[1]
 
-        # One random byte per pixel (gate, ~30% acceptance)
-        # plus one byte per channel (direction: -1, 0, +1 via mod 3)
+        # Map noise_level 1-10 to gate threshold 10-255 (what % of pixels get noise)
+        gate_threshold = min(255, max(10, noise_level * 25))
+        # Map noise_level 1-10 to max delta (1 for subtle, 3 for aggressive)
+        max_delta = min(3, max(1, noise_level // 4))
+
+        # One random byte per pixel (gate) plus one byte per channel (direction)
         gate = random.randbytes(num_pixels)
         noise = random.randbytes(len(raw))
 
-        # 77/256 ≈ 30.1% — matches the original random.random() < 0.3 gate
         for p in range(num_pixels):
-            if gate[p] < 77:
+            if gate[p] < gate_threshold:
                 base = p * bands
                 for c in range(bands):
                     direction = noise[base + c] % 3
                     if direction == 0:
-                        v = raw[base + c] - 1
+                        v = raw[base + c] - max_delta
                         raw[base + c] = 0 if v < 0 else v
                     elif direction == 2:
-                        v = raw[base + c] + 1
+                        v = raw[base + c] + max_delta
                         raw[base + c] = 255 if v > 255 else v
 
         noisy_image = Image.frombytes(original_mode, image.size, bytes(raw))
@@ -1557,50 +1676,211 @@ def _print_banner():
     print()
 
 
+def _show_preview(file_path: str):
+    """Show metadata found in an image before nuking."""
+    from PIL import Image
+    path = Path(file_path)
+    print(f"\n  {path.name}:")
+    has_meta = False
+    try:
+        with Image.open(file_path) as img:
+            info = img.info
+            if info:
+                has_meta = True
+                for k, v in info.items():
+                    val = str(v)[:80]
+                    print(f"    {k}: {val}")
+            else:
+                print("    (no metadata found — already clean)")
+    except Exception as e:
+        print(f"    (cannot read: {e})")
+
+    # Also scan for binary markers
+    raw = path.read_bytes()
+    markers = {
+        b'Exif\x00\x00': 'EXIF header',
+        b'<x:xmpmeta': 'XMP metadata',
+        b'ICC_PROFILE': 'ICC profile',
+        b'Photoshop': 'Photoshop data',
+        b'xml': 'XML metadata',
+    }
+    found = [name for sig, name in markers.items() if sig in raw]
+    if found:
+        has_meta = True
+        print(f"    binary markers: {', '.join(found)}")
+    if not has_meta:
+        print(f"    ✓ Clean — no metadata detected")
+
+
+def _collect_files(paths, recursive=False):
+    """Collect all supported image files from paths (files or directories)."""
+    files = []
+    for p in paths:
+        p = Path(p)
+        if p.is_file():
+            if p.suffix.lower() in MetaNuke.SUPPORTED_FORMATS:
+                files.append(str(p))
+        elif p.is_dir():
+            glob = '**/*' if recursive else '*'
+            for f in sorted(p.glob(glob)):
+                if f.is_file() and f.suffix.lower() in MetaNuke.SUPPORTED_FORMATS:
+                    files.append(str(f))
+    return files
+
+
+def _log_results(log_path: str, results: list):
+    """Append audit log entry."""
+    from datetime import datetime
+    timestamp = datetime.now().isoformat(timespec='seconds')
+    lines = [f"--- {timestamp} ---"]
+    ok = sum(1 for _, s, _ in results if s)
+    bad = len(results) - ok
+    lines.append(f"total={len(results)} ok={ok} failed={bad}")
+    for path, success, msg in results:
+        status = "OK" if success else "FAIL"
+        lines.append(f"  {status} {path}")
+    lines.append("")
+    with open(log_path, 'a') as f:
+        f.write('\n'.join(lines) + '\n')
+
+
+def _show_preview_collect(files: list[str]):
+    """Preview mode: show metadata for all files without nuking."""
+    for f in files:
+        _show_preview(f)
+    print()
+
+
+TRECL_FORMATS = {'.heic', '.heif'}
+
+
 def main():
-    """Main entry point.
+    """Main entry point."""
+    parser = argparse.ArgumentParser(
+        prog='meta_nuke',
+        description='Forensically-safe offline metadata stripper',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            'Examples:\n'
+            '  meta_nuke image.jpg\n'
+            '  meta_nuke --dir ./photos --recursive --output ./clean\n'
+            '  meta_nuke --preview image.jpg\n'
+            '  meta_nuke --noise-level 0 image.jpg    # lossless\n'
+            '  meta_nuke --log nuke.log --dir ./batch\n'
+        ),
+    )
+    parser.add_argument('files', nargs='*', metavar='FILE',
+                        help='Image file(s) to nuke')
+    parser.add_argument('--dir', '-d', metavar='DIR',
+                        help='Process all images in a directory')
+    parser.add_argument('--recursive', '-r', action='store_true',
+                        help='Recurse into subdirectories (with --dir)')
+    parser.add_argument('--output', '-o', metavar='DIR',
+                        help='Output directory (default: overwrite in-place)')
+    parser.add_argument('--noise-level', '-n', type=int, default=5,
+                        choices=range(0, 11),
+                        help='Forensic noise level 0-10 (0=off, 5=default, 10=max)')
+    parser.add_argument('--preview', '-p', action='store_true',
+                        help='Preview metadata before nuking (no changes)')
+    parser.add_argument('--log', '-l', metavar='FILE',
+                        help='Append audit log to FILE')
+    parser.add_argument('--no-banner', action='store_true',
+                        help='Suppress the ASCII banner')
+    parser.add_argument('--gui', action='store_true',
+                        help='Force GUI mode (with optional file arguments)')
 
-    Three modes:
-      no args                  → open GUI
-      --gui file1 file2 ...    → open GUI preloaded with files (Quick Action)
-      file1 file2 ...          → CLI mode (silent nuke, prints results)
-    """
-    args = sys.argv[1:]
+    args = parser.parse_args()
 
-    # --gui forces the GUI, optionally with files preloaded
-    if args and args[0] == '--gui':
-        app = MetaNukeGUI(preloaded_files=args[1:] or None)
+    # --gui mode
+    if args.gui:
+        app = MetaNukeGUI(preloaded_files=args.files or None)
         app.run()
         return
 
     # Bare invocation → GUI
-    if not args:
+    if not args.files and not args.dir:
         app = MetaNukeGUI()
         app.run()
         return
 
-    # --no-banner suppresses the ASCII logo
-    show_banner = True
-    if '--no-banner' in args:
-        args.remove('--no-banner')
-        show_banner = False
+    # Collect files
+    sources = list(args.files)
+    if args.dir:
+        sources.append(args.dir)
 
-    # Otherwise → CLI
-    if show_banner:
+    if not sources:
+        parser.print_help()
+        return
+
+    all_files = _collect_files(sources, recursive=args.recursive)
+
+    if not all_files:
+        print("No supported image files found.")
+        return
+
+    # Preview mode — just show metadata, don't nuke
+    if args.preview:
+        if not args.no_banner:
+            _print_banner()
+        print(f"Scanning {len(all_files)} file(s) for metadata...\n")
+        _show_preview_collect(all_files)
+        return
+
+    # Nuke mode
+    if not args.no_banner:
         _print_banner()
 
+    # Progress bar support (tqdm optional)
+    try:
+        from tqdm import tqdm
+        progress = tqdm(total=len(all_files), unit='file', bar_format='{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}]')
+        use_tqdm = True
+    except ImportError:
+        progress = None
+        use_tqdm = False
+
     results = []
-    for file_path in args:
-        print(f"  {file_path} ...", end=" ", flush=True)
-        success, message = MetaNuke.nuke_image(file_path)
-        status = "✓" if success else "✗"
-        print(f"{status}  {message}")
+    for i, file_path in enumerate(all_files):
+        if not use_tqdm:
+            print(f"  [{i+1}/{len(all_files)}] {Path(file_path).name} ...",
+                  end=" ", flush=True)
+
+        # Determine output path
+        output_path = None
+        if args.output:
+            src = Path(file_path)
+            out_dir = Path(args.output)
+            out_dir.mkdir(parents=True, exist_ok=True)
+            output_path = str(out_dir / src.name)
+
+        success, message = MetaNuke.nuke_image(
+            file_path, noise_level=args.noise_level, output_path=output_path,
+        )
+
+        if use_tqdm:
+            status = "✓" if success else "✗"
+            progress.set_postfix_str(f"{status} {Path(file_path).name}")
+            progress.update(1)
+        else:
+            status = "✓" if success else "✗"
+            print(f"{status}  {message}")
+
         results.append((file_path, success, message))
 
+    if use_tqdm:
+        progress.close()
+        print()
+
+    # Summary
     total = len(results)
     ok = sum(1 for _, s, _ in results if s)
     bad = total - ok
-    print(f"\n  {ok}/{total} nuked  ·  {bad} failed")
+    print(f"  {ok}/{total} nuked  ·  {bad} failed")
+
+    # Audit log
+    if args.log:
+        _log_results(args.log, results)
+        print(f"  Log: {args.log}")
 
 
 if __name__ == "__main__":

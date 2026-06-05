@@ -153,6 +153,34 @@ def has_gif_comment_block(data: bytes) -> bool:
     return False
 
 
+def make_svg_with_metadata(path: Path) -> None:
+    """Build an SVG with metadata elements that must be stripped."""
+    content = '<?xml version="1.0" encoding="UTF-8"?>\n'
+    content += '<!-- created by LeakyApp v3.0 -->\n'
+    content += '<svg xmlns="http://www.w3.org/2000/svg"'
+    content += ' xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"'
+    content += ' xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"'
+    content += ' xmlns:dc="http://purl.org/dc/elements/1.1/"'
+    content += ' width="100" height="100">\n'
+    content += '  <metadata>'
+    content += '<rdf:RDF><rdf:Description>'
+    content += '<dc:creator>leaky_author</dc:creator>'
+    content += '</rdf:Description></rdf:RDF></metadata>\n'
+    content += '  <desc>A description that should not survive</desc>\n'
+    content += '  <title>My Leaky SVG</title>\n'
+    content += '  <rect width="100" height="100" fill="blue"/>\n'
+    content += '</svg>\n'
+    path.write_text(content)
+
+
+def has_svg_metadata(data: str) -> bool:
+    """Return True if SVG contains metadata/desc/title elements."""
+    return ('<metadata>' in data or '<desc>' in data or '<title>' in data
+            or '<!--' in data or '<?xml' in data)
+
+
+# Tests -----------------------------------------------------------------
+
 def test_jpeg_stripping(tmp: Path) -> None:
     print("test_jpeg_stripping")
     src = tmp / "with_exif.jpg"
@@ -236,6 +264,109 @@ def test_bulk_nuke(tmp: Path) -> None:
         check(f"{p.name} clean of APP segments", not has_app1_jpeg(data))
 
 
+def test_svg_stripping(tmp: Path) -> None:
+    print("test_svg_stripping")
+    src = tmp / "with_meta.svg"
+    make_svg_with_metadata(src)
+    before = src.read_text()
+    check("input has SVG metadata", has_svg_metadata(before))
+
+    ok, msg = MetaNuke.nuke_image(str(src))
+    check("nuke_image returned success", ok, detail=msg)
+
+    after = src.read_text()
+    check("no metadata element", '<metadata>' not in after)
+    check("no desc element", '<desc>' not in after)
+    check("no title element", '<title>' not in after)
+    check("no XML comments", '<!--' not in after)
+    check("XML declaration stripped", '<?xml' not in after)
+    check("visual content preserved", '<rect' in after)
+    check("inkscape namespace stripped", 'inkscape' not in after)
+
+
+def test_svg_with_output_dir(tmp: Path) -> None:
+    print("test_svg_with_output_dir")
+    src = tmp / "svg_output_test.svg"
+    make_svg_with_metadata(src)
+    out_dir = tmp / "clean"
+    ok, msg = MetaNuke.nuke_image(str(src), output_path=str(out_dir / src.name))
+    check("nuke_image with output dir", ok, detail=msg)
+    output_file = out_dir / src.name
+    check("output file exists", output_file.exists())
+    if output_file.exists():
+        after = output_file.read_text()
+        check("output SVG has no metadata", '<metadata>' not in after)
+
+
+def test_noise_level_0(tmp: Path) -> None:
+    """Test noise_level=0 produces valid output."""
+    print("test_noise_level_0")
+    src = tmp / "no_noise.jpg"
+    make_jpeg_with_exif(src)
+    ok, msg = MetaNuke.nuke_image(str(src), noise_level=0)
+    check("nuke_image with noise_level=0", ok, detail=msg)
+    check("no APP segments after noise-free nuke",
+          not has_app1_jpeg(src.read_bytes()))
+
+
+def test_sha256_in_output(tmp: Path) -> None:
+    """Test that SHA256 hash appears in the success message."""
+    print("test_sha256_in_output")
+    src = tmp / "hash_test.jpg"
+    make_jpeg_with_exif(src)
+    ok, msg = MetaNuke.nuke_image(str(src))
+    check("sha256 in output", 'sha256:' in msg, detail=msg)
+
+
+def test_log_output(tmp: Path) -> None:
+    """Test that _log_results writes a valid log file."""
+    print("test_log_output")
+    from meta_nuke import _log_results
+    log_path = tmp / "nuke.log"
+    results = [("/tmp/a.jpg", True, "NUKED: a.jpg"), ("/tmp/b.png", False, "FAIL")]
+    _log_results(str(log_path), results)
+    check("log file created", log_path.exists())
+    if log_path.exists():
+        content = log_path.read_text()
+        check("log has total count", 'total=2' in content)
+        check("log has OK/FAIL", 'OK' in content and 'FAIL' in content)
+
+
+def test_banner_constants(_=None):
+    """Test that the BANNER constant is defined and looks right."""
+    print("test_banner_constants")
+    from meta_nuke import BANNER
+    # Banner uses Unicode block chars, not ASCII — check for distinctive patterns
+    check("banner has Unicode blocks", '\u2588' in BANNER,
+          detail="BANNER missing block character")
+    check("banner has box-drawing chars", '\u2557' in BANNER or '\u2554' in BANNER,
+          detail="BANNER missing box-drawing")
+    lines = BANNER.count('\n')
+    check("banner is multi-line", lines >= 5,
+          detail=f"only {lines} lines")
+
+
+def test_collect_files_recursive(tmp: Path) -> None:
+    """Test recursive file collection."""
+    print("test_collect_files_recursive")
+    from meta_nuke import _collect_files
+    # Use a clean subdir so previous test artefacts don't interfere
+    work = tmp / "collect_test"
+    work.mkdir()
+    subdir = work / "sub"
+    subdir.mkdir()
+    (subdir / "nested.jpg").write_bytes(b'')
+    (work / "root.png").write_bytes(b'')
+
+    files = _collect_files([str(work)], recursive=False)
+    check("non-recursive collects root only",
+          len(files) == 1 and 'root.png' in files[0])
+
+    files = _collect_files([str(work)], recursive=True)
+    check("recursive finds nested files",
+          len(files) == 2)
+
+
 def main() -> int:
     print("Meta Nuke smoke tests")
     print("=====================\n")
@@ -248,6 +379,13 @@ def main() -> int:
             test_unsupported_format,
             test_missing_file,
             test_bulk_nuke,
+            test_svg_stripping,
+            test_svg_with_output_dir,
+            test_noise_level_0,
+            test_sha256_in_output,
+            test_log_output,
+            test_banner_constants,
+            test_collect_files_recursive,
         ]
         for t in tests:
             try:
