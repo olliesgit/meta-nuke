@@ -22,6 +22,8 @@ Similar to online tools like MetaClean but 100% LOCAL - never touches the networ
 DESIGNED FOR LIFE-OR-DEATH SCENARIOS WHERE FORENSIC ANALYSIS MUST FIND NOTHING.
 """
 
+__version__ = "1.1.0"
+
 import argparse
 import hashlib
 import os
@@ -100,6 +102,13 @@ except ImportError:
 import xml.etree.ElementTree as ET
 SVG_NS = 'http://www.w3.org/2000/svg'
 
+# PDF support via PyMuPDF
+try:
+    import fitz
+    PDF_AVAILABLE = True
+except ImportError:
+    PDF_AVAILABLE = False
+
 
 # Cache the sRGB ICC profile as a module singleton. createProfile() is
 # deterministic but not free (~0.7ms on M1, plus Pillow allocates an
@@ -120,6 +129,8 @@ class MetaNuke:
                           '.svg', '.avif'}
     if HEIF_AVAILABLE:
         SUPPORTED_FORMATS.update({'.heic', '.heif'})
+    if PDF_AVAILABLE:
+        SUPPORTED_FORMATS.add('.pdf')
 
     @staticmethod
     def nuke_image(file_path: str, noise_level: int = 5,
@@ -163,6 +174,10 @@ class MetaNuke:
             # SVG is XML-based, not pixel-based — handle separately
             if path.suffix.lower() == '.svg':
                 return MetaNuke._nuke_svg(file_path, output_path=output_path)
+
+            # PDF via PyMuPDF — strip document metadata + XMP
+            if path.suffix.lower() == '.pdf':
+                return MetaNuke._nuke_pdf(file_path, output_path=output_path)
 
             # Read the original image - ONLY extract pixel data
             with Image.open(file_path) as original:
@@ -429,6 +444,66 @@ class MetaNuke:
             return False, f"SVG parse error: {e}"
         except Exception as e:
             return False, f"Error processing SVG {file_path}: {str(e)}"
+
+    @staticmethod
+    def _nuke_pdf(file_path: str, output_path: str = None) -> tuple[bool, str]:
+        """
+        Strip metadata from a PDF using PyMuPDF.
+
+        Removes:
+          - Document metadata dict (author, creator, producer, subject, title)
+          - XMP metadata stream
+        Preserves all pages, text, and visual content.
+        """
+        try:
+            path = Path(file_path)
+            doc = fitz.open(file_path)
+
+            # Wipe document metadata
+            doc.set_metadata({})
+
+            # Remove XMP metadata if present
+            try:
+                doc.del_xml_metadata()
+            except Exception:
+                pass
+
+            # Strip metadata from embedded images on each page
+            for page_num in range(len(doc)):
+                page = doc[page_num]
+                for img_index in range(len(page.get_images())):
+                    xref = page.get_images()[img_index][0]
+                    try:
+                        pix = fitz.Pixmap(doc, xref)
+                        if pix.n < 5:  # not a mask
+                            # Remove metadata by re-saving as a clean pixmap
+                            clean_pix = fitz.Pixmap(fitz.csRGB, pix)
+                            doc.replace_image(xref, pixmap=clean_pix)
+                            clean_pix = None
+                        pix = None
+                    except Exception:
+                        pass
+
+            # Save as a new clean PDF (always to temp, then rename)
+            target = Path(output_path) if output_path else path
+            target.parent.mkdir(parents=True, exist_ok=True)
+            tmp_pdf = target.with_suffix('.pdf.tmp')
+            doc.save(
+                str(tmp_pdf),
+                garbage=4,         # remove unused objects
+                deflate=True,       # compress streams
+                clean=True,         # clean up structure
+            )
+            doc.close()
+
+            # Atomic replace
+            os.replace(str(tmp_pdf), str(target))
+
+            final_size = target.stat().st_size
+            return True, f"NUKED: {path.name} ({final_size} bytes)"
+
+        except Exception as e:
+            return False, f"Error processing PDF {file_path}: {str(e)}"
 
     @staticmethod
     def _nuke_animated_gif(file_path: str) -> tuple[bool, str]:
@@ -2019,8 +2094,15 @@ def main():
                         help='Force GUI mode (with optional file arguments)')
     parser.add_argument('--json', action='store_true',
                         help='Output results as JSON (machine-readable)')
+    parser.add_argument('--version', action='store_true',
+                        help='Show version and exit')
 
     args = parser.parse_args()
+
+    # --version
+    if args.version:
+        print(f"Meta Nuke v{__version__}")
+        return
 
     # --gui mode
     if args.gui:

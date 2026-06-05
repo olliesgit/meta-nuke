@@ -1,5 +1,37 @@
 # Changelog
 
+## [2026-06-05] — v1.1.0
+
+### Added
+- **AVIF format support** — Pillow 10+ handles it natively
+- **PDF metadata stripping** — via PyMuPDF (fitz). Strips document metadata (author, creator, producer), XMP metadata, and re-encodes embedded images without their metadata
+- **HEIC/HEIF support** — iPhone photos with GPS metadata now nukeable (pillow-heif)
+- **SVG support** — XML-parses and strips `<metadata>`, `<desc>`, `<title>`, comments, processing instructions, and extra namespace declarations
+- **Noise level control** — `--noise-level 0-10` (CLI) or slider in GUI. 0 = lossless, 5 = default, 10 = max
+- **Output directory** — `--output DIR` / `-o DIR` (CLI) or BROWSE button in GUI. Saves to separate dir instead of overwriting in-place
+- **Batch directory processing** — `--dir DIR` / `--recursive` (CLI). Drag-and-drop directories in GUI
+- **Metadata preview** — `--preview` (CLI) or 🔍 PREVIEW button in GUI. Shows EXIF/XMP/ICC metadata without nuking
+- **Audit log** — `--log FILE` (CLI) or AUDIT LOG checkbox in GUI. Appends timestamped results to a log file
+- **SHA256 checksums** — shown in every success message. Verifiable file integrity
+- **Progress bar** — tqdm for CLI bulk ops, Canvas-based progress bar widget in GUI
+- **JSON output** — `--json` flag produces clean machine-readable output (no tqdm, no banner)
+- **Config persistence** — `~/.metanukerc` saves noise level, output dir, and audit log preference between sessions
+- **`--version` flag** — shows version and exits
+- **`__version__`** — `"1.1.0"`
+
+### Changed
+- **CLI rewritten** with argparse — full `--help` with examples
+- **GUI redesigned** — larger window (560x620), options panel with noise slider, output browser, preview, audit log
+- **GUI progress** — visual fill-bar replaces text-only counter
+- **GUI results** — SHA256 in results dialog, better summary
+- **File browser** — dynamically builds file filter from SUPPORTED_FORMATS
+
+### Fixed
+- SVG output dir — creates parent directories automatically
+- SVG namespace serialization — registers SVG namespace so tags render as `<rect>` not `<ns0:rect>`
+- tqdm suppressed in JSON mode
+- PDF saves to temp then renames (PyMuPDF limitation)
+
 ## [2026-06-02]
 
 ### Added
@@ -20,4 +52,4 @@
 
 ### Fixed
 - **Button text invisible in disabled state** — added `disabledforeground='#000000'` to the NUKE META button so text is black-on-grey and readable when no file is selected (previously white-on-grey, invisible).
-- **Broken `/Applications` symlink** — the symlink in `/Applications` pointed to a stale path. Relinked to the current project directory and reset Launch Services cache so the app icon shows up properly in Finder.
+- **Broken `/Applications` symlink** — the symlink in `/Applications` pointed to a stale path. Relinked to the current project directory and reset Launch Services cache so the app icon shows up correctly in Finder.

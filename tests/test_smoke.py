@@ -352,6 +352,41 @@ def test_json_output(tmp: Path) -> None:
     check("JSON has sha256 in message", 'sha256:' in parsed['results'][0]['message'])
 
 
+def make_pdf_with_metadata(path: Path) -> None:
+    """Build a PDF with document metadata."""
+    import fitz
+    doc = fitz.open()
+    page = doc.new_page()
+    page.insert_text((50, 50), 'Test PDF content', fontsize=16)
+    doc.set_metadata({'author': 'Leaky Author', 'producer': 'LeakyApp',
+                      'subject': 'Sensitive Data'})
+    doc.save(str(path), garbage=4, deflate=True)
+    doc.close()
+
+
+def test_pdf_stripping(tmp: Path) -> None:
+    """Test PDF metadata stripping."""
+    print("test_pdf_stripping")
+    from meta_nuke import PDF_AVAILABLE
+    if not PDF_AVAILABLE:
+        print("  skip  PDF not available (no PyMuPDF)")
+        return
+    src = tmp / "with_meta.pdf"
+    make_pdf_with_metadata(src)
+    import fitz
+    before = fitz.open(str(src)).metadata
+    check("input has author", bool(before.get('author')), detail=before.get('author', ''))
+    check("input has producer", bool(before.get('producer')), detail=before.get('producer', ''))
+
+    ok, msg = MetaNuke.nuke_image(str(src))
+    check("nuke_image returned success", ok, detail=msg)
+
+    after = fitz.open(str(src)).metadata
+    check("author stripped", not after.get('author'))
+    check("producer stripped", not after.get('producer'))
+    check("subject stripped", not after.get('subject'))
+
+
 def test_banner_constants(_=None):
     """Test that the BANNER constant is defined and looks right."""
     print("test_banner_constants")
@@ -405,6 +440,7 @@ def main() -> int:
             test_sha256_in_output,
             test_log_output,
             test_json_output,
+            test_pdf_stripping,
             test_banner_constants,
             test_collect_files_recursive,
         ]
