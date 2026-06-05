@@ -8,5 +8,10 @@ if [ ! -d "venv" ]; then
 fi
 
 source venv/bin/activate
-python meta_nuke.py "$@"
 
+# Install the package in development mode so 'from metanuke' imports work
+if ! python -c "from metanuke import MetaNuke" 2>/dev/null; then
+    pip install -e . --quiet
+fi
+
+python -m metanuke.cli "$@"

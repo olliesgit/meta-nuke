@@ -26,7 +26,12 @@ sys.path.insert(0, str(ROOT))
 
 from PIL import Image, PngImagePlugin  # noqa: E402
 
-from meta_nuke import MetaNuke  # noqa: E402
+from metanuke import MetaNuke  # noqa: E402
+from metanuke.utils import log_results as _log_results
+from metanuke.utils import collect_files as _collect_files
+from metanuke.utils import load_config as _load_config
+from metanuke.utils import save_config as _save_config
+from metanuke import __version__
 
 
 passed = 0
@@ -321,7 +326,6 @@ def test_sha256_in_output(tmp: Path) -> None:
 def test_log_output(tmp: Path) -> None:
     """Test that _log_results writes a valid log file."""
     print("test_log_output")
-    from meta_nuke import _log_results
     log_path = tmp / "nuke.log"
     results = [("/tmp/a.jpg", True, "NUKED: a.jpg"), ("/tmp/b.png", False, "FAIL")]
     _log_results(str(log_path), results)
@@ -367,7 +371,7 @@ def make_pdf_with_metadata(path: Path) -> None:
 def test_pdf_stripping(tmp: Path) -> None:
     """Test PDF metadata stripping."""
     print("test_pdf_stripping")
-    from meta_nuke import PDF_AVAILABLE
+    from metanuke import PDF_AVAILABLE
     if not PDF_AVAILABLE:
         print("  skip  PDF not available (no PyMuPDF)")
         return
@@ -390,7 +394,7 @@ def test_pdf_stripping(tmp: Path) -> None:
 def test_banner_constants(_=None):
     """Test that the BANNER constant is defined and looks right."""
     print("test_banner_constants")
-    from meta_nuke import BANNER
+    from metanuke.utils import BANNER
     # Banner uses Unicode block chars, not ASCII — check for distinctive patterns
     check("banner has Unicode blocks", '\u2588' in BANNER,
           detail="BANNER missing block character")
@@ -404,7 +408,6 @@ def test_banner_constants(_=None):
 def test_collect_files_recursive(tmp: Path) -> None:
     """Test recursive file collection."""
     print("test_collect_files_recursive")
-    from meta_nuke import _collect_files
     # Use a clean subdir so previous test artefacts don't interfere
     work = tmp / "collect_test"
     work.mkdir()

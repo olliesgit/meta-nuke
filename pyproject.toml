@@ -1,0 +1,42 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.backends._legacy:_Backend"
+
+[project]
+name = "meta-nuke"
+version = "1.1.0"
+description = "Forensically-safe offline metadata stripper"
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.9"
+authors = [
+    {name = "olliesgit"},
+]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Topic :: Security",
+    "Environment :: X11 Applications",
+]
+dependencies = [
+    "Pillow>=10.0.0",
+]
+
+[project.optional-dependencies]
+heif = ["pillow-heif>=0.10.0"]
+pdf = ["PyMuPDF>=1.23.0"]
+progress = ["tqdm>=4.60.0"]
+gui = ["tkinterdnd2>=0.3.0"]
+all = [
+    "pillow-heif>=0.10.0",
+    "PyMuPDF>=1.23.0",
+    "tqdm>=4.60.0",
+    "tkinterdnd2>=0.3.0",
+]
+
+[project.scripts]
+meta-nuke = "metanuke.cli:main"
+metanuke = "metanuke.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["metanuke*"]
