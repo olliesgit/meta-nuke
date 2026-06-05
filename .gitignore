@@ -1,0 +1,39 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Virtual Environment
+venv/
+env/
+ENV/
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Test files
+test_images/
+*.test.jpg
+*.test.png
+
+# Generated / runtime artefacts
+*.workflow/
+# Local Claude Code config (per-user permissions, may contain home paths)
+.claude/
+
+# macOS app bundle (generated/build artefact)
+Meta Nuke.app/
+
+# Review notes (internal)
+META_NUKE_REVIEW.md
