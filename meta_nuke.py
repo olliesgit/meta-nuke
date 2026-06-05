@@ -1539,6 +1539,24 @@ class MetaNukeGUI:
         self.root.mainloop()
 
 
+BANNER = r"""
+███╗   ███╗███████╗████████╗ █████╗     ███╗   ██╗██╗   ██╗██╗  ██╗███████╗
+████╗ ████║██╔════╝╚══██╔══╝██╔══██╗    ████╗  ██║██║   ██║██║ ██╔╝██╔════╝
+██╔████╔██║█████╗     ██║   ███████║    ██╔██╗ ██║██║   ██║█████╔╝ █████╗
+██║╚██╔╝██║██╔══╝     ██║   ██╔══██║    ██║╚██╗██║██║   ██║██╔═██╗ ██╔══╝
+██║ ╚═╝ ██║███████╗   ██║   ██║  ██║    ██║ ╚████║╚██████╔╝██║  ██╗███████╗
+╚═╝     ╚═╝╚══════╝   ╚═╝   ╚═╝  ╚═╝    ╚═╝  ╚═══╝ ╚═════╝ ╚═╝  ╚═╝╚══════╝
+"""
+
+
+def _print_banner():
+    """Print the ASCII art logo."""
+    print(BANNER)
+    print("Forensically-safe offline metadata stripper")
+    print("100% local  ·  100% offline  ·  Zero traces left")
+    print()
+
+
 def main():
     """Main entry point.
 
@@ -1561,20 +1579,28 @@ def main():
         app.run()
         return
 
+    # --no-banner suppresses the ASCII logo
+    show_banner = True
+    if '--no-banner' in args:
+        args.remove('--no-banner')
+        show_banner = False
+
     # Otherwise → CLI
-    print("☢️ META NUKE - Command Line Mode ☢️")
-    print("=" * 40)
+    if show_banner:
+        _print_banner()
 
+    results = []
     for file_path in args:
-        print(f"\nProcessing: {file_path}")
+        print(f"  {file_path} ...", end=" ", flush=True)
         success, message = MetaNuke.nuke_image(file_path)
-        if success:
-            print(f"  ✓ {message}")
-        else:
-            print(f"  ✗ {message}")
+        status = "✓" if success else "✗"
+        print(f"{status}  {message}")
+        results.append((file_path, success, message))
 
-    print("\n" + "=" * 40)
-    print("COMPLETE")
+    total = len(results)
+    ok = sum(1 for _, s, _ in results if s)
+    bad = total - ok
+    print(f"\n  {ok}/{total} nuked  ·  {bad} failed")
 
 
 if __name__ == "__main__":
