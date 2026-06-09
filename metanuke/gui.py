@@ -187,54 +187,57 @@ class MetaNukeGUI:
         else:
             self.drop_label.configure(text="📁 CLICK TO SELECT IMAGES\n(supports bulk processing)")
 
-        # Options panel
-        opts = tk.Frame(main_frame, bg='#0a0a0a')
-        opts.pack(fill='x', pady=(0, 10))
+        # Options panel — noise, output dir, preview, audit log
+        opts = tk.LabelFrame(main_frame, text="OPTIONS", font=('Menlo', 10, 'bold'),
+                              bg='#0a0a0a', fg='#ff6600', bd=1, relief='solid',
+                              padx=10, pady=10)
+        opts.pack(fill='x', pady=(0, 12))
 
         # Noise slider
         nr = tk.Frame(opts, bg='#0a0a0a')
-        nr.pack(fill='x', pady=(2, 2))
-        tk.Label(nr, text="NOISE", font=('Menlo', 9, 'bold'),
-                 bg='#0a0a0a', fg='#ff6600', width=7, anchor='w').pack(side='left')
+        nr.pack(fill='x', pady=(4, 6))
+        tk.Label(nr, text="FORENSIC NOISE", font=('Menlo', 11, 'bold'),
+                 bg='#0a0a0a', fg='#ff6600', width=16, anchor='w').pack(side='left')
         tk.Scale(nr, from_=0, to=10, orient='horizontal', variable=self.noise_level,
-                 showvalue=True, bg='#1a1a1a', fg='#cccccc', troughcolor='#333333',
-                 highlightthickness=0, bd=0, length=200, sliderrelief='flat',
-                 font=('Menlo', 8)).pack(side='left', padx=(0, 5))
-        tk.Label(nr, text="0=lossless  10=max", font=('Menlo', 7),
-                 bg='#0a0a0a', fg='#666666').pack(side='left')
+                 showvalue=True, bg='#1a1a1a', fg='#ffffff', troughcolor='#333333',
+                 highlightthickness=0, bd=0, length=220, sliderrelief='flat',
+                 width=20, font=('Menlo', 11)).pack(side='left', padx=(0, 8))
+        tk.Label(nr, text="0=lossless  10=max", font=('Menlo', 10),
+                 bg='#0a0a0a', fg='#888888').pack(side='left')
 
         # Output dir
         orow = tk.Frame(opts, bg='#0a0a0a')
-        orow.pack(fill='x', pady=(2, 2))
-        tk.Label(orow, text="OUTPUT", font=('Menlo', 9, 'bold'),
-                 bg='#0a0a0a', fg='#ff6600', width=7, anchor='w').pack(side='left')
+        orow.pack(fill='x', pady=(4, 6))
+        tk.Label(orow, text="OUTPUT DIRECTORY", font=('Menlo', 11, 'bold'),
+                 bg='#0a0a0a', fg='#ff6600', width=16, anchor='w').pack(side='left')
         self.out_dir_label = tk.Label(orow, text="(overwrite in-place)" if not self.output_dir
                                        else self.output_dir,
-                                       font=('Menlo', 9), bg='#0a0a0a',
+                                       font=('Menlo', 10), bg='#0a0a0a',
                                        fg='#888888' if not self.output_dir else '#00cc66', anchor='w')
         self.out_dir_label.pack(side='left', fill='x', expand=True)
-        tk.Button(orow, text="BROWSE", font=('Menlo', 8), bg='#333333', fg='#cccccc', bd=0,
+        tk.Button(orow, text="BROWSE", font=('Menlo', 10, 'bold'),
+                  bg='#333333', fg='#cccccc', bd=0, padx=10, pady=4,
                   activebackground='#555555', activeforeground='#ffffff',
                   command=self._browse_output_dir).pack(side='right')
-        tk.Button(orow, text="✕", font=('Menlo', 9, 'bold'), bg='#222222', fg='#888888', bd=0,
+        tk.Button(orow, text="✕", font=('Menlo', 12, 'bold'), bg='#222222', fg='#888888', bd=0,
                   activebackground='#444444', activeforeground='#ff0000',
-                  command=self._clear_output_dir).pack(side='right', padx=(0, 4))
+                  command=self._clear_output_dir).pack(side='right', padx=(0, 6))
 
         # Preview + audit log
         arow = tk.Frame(opts, bg='#0a0a0a')
-        arow.pack(fill='x', pady=(2, 2))
-        self.preview_btn = tk.Button(arow, text="🔍 PREVIEW", font=('Menlo', 9, 'bold'),
-                                      bg='#333333', fg='#cccccc', bd=0, padx=8, pady=2,
+        arow.pack(fill='x', pady=(6, 2))
+        self.preview_btn = tk.Button(arow, text="🔍  PREVIEW METADATA", font=('Menlo', 11, 'bold'),
+                                      bg='#333333', fg='#cccccc', bd=0, padx=14, pady=6,
                                       activebackground='#555555', activeforeground='#ffffff',
                                       state='disabled', command=self._preview_metadata)
         self.preview_btn.pack(side='left')
-        tk.Checkbutton(arow, text="AUDIT LOG", font=('Menlo', 9), variable=self.audit_logging,
-                       bg='#0a0a0a', fg='#888888', selectcolor='#222222',
-                       activebackground='#0a0a0a', activeforeground='#cccccc',
-                       onvalue=True, offvalue=False).pack(side='left', padx=(10, 0))
-        tk.Label(arow, text="~/.metanukerc", font=('Menlo', 7),
-                 bg='#0a0a0a', fg='#444444').pack(side='right')
-
+        tk.Checkbutton(arow, text="AUDIT LOG", font=('Menlo', 11),
+                       variable=self.audit_logging, bg='#0a0a0a',
+                       fg='#aaaaaa', selectcolor='#222222',
+                       activebackground='#0a0a0a', activeforeground='#ffffff',
+                       onvalue=True, offvalue=False).pack(side='left', padx=(14, 0))
+        tk.Label(arow, text="~/.metanukerc", font=('Menlo', 8),
+                 bg='#0a0a0a', fg='#555555').pack(side='right')
         # File display
         self.file_label = tk.Label(main_frame, text="No file selected", font=('Menlo', 11),
                                     bg='#0a0a0a', fg='#ffffff', wraplength=450)
