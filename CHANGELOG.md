@@ -1,5 +1,30 @@
 # Changelog
 
+## [2026-06-21] — v1.2.0
+
+### Added
+- **Binary-level metadata diff** — new `MetaNuke.scan_metadata()` and `MetaNuke.compare_metadata()` methods produce structured metadata reports. Post-nuke dialog now shows exactly what was removed (info fields, EXIF tags, binary markers)
+- **Drop onto NUKE button** — files can be dropped directly on the NUKE button to auto-start processing, skipping the extra click
+- **macOS Quick Action** — `MetaNuke.workflow` bundle adds "Nuke with MetaNuke" to Finder right-click → Quick Actions. Install via `install-quick-action.sh`
+- **Progress ETA** — batch processing now estimates and displays time remaining based on per-file speed
+- **Lossless mode toggle** — one-click checkbox disables noise, sets slider to 0, uses max quality. Restores defaults when unchecked
+- **Configurable output naming** — new "Name suffix" text field (e.g. `_nuked` turns `photo.jpg` → `photo_nuked.jpg`)
+- **Keyboard shortcuts** — `⌘O` open files, `⌘N` nuke, `⌘P` preview, `⎋` clear selection
+- **Tooltips on all controls** — hover delay of 400ms shows explanations on every interactive element (drop zone, noise, lossless, output, preview, audit log, NUKE button)
+- **Enhanced metadata preview** — now shows PIL info fields, EXIF tag count, and detected binary markers (EXIF, XMP, ICC, Photoshop) in a structured view
+- **`--ask-noise` CLI flag** — prompts before applying forensic noise to each file (y/N)
+
+### Changed
+- **Resizable window** — default 580×700, minimum 520×620. Expands to fit content
+- **Button contrast** — bumped from `#4a4a4c` → `#6a6a6c` → `#9a9a9c` with black text after user feedback. Final ratio ~6:1 against card background
+- **GUI refresh** — switched to Helvetica Neue, sentence case labels, card-based options panel, pill-shaped NUKE button concept (later simplified to rectangle)
+- **Footer** — condensed to two lines, more subtle colour hierarchy
+- **File info display** — single file now shows name, size, and dimensions (e.g. `photo.jpg · 2.4 MB · 1920 × 1080px`)
+
+### Fixed
+- **Invisible buttons in Save To section** — iterated from `#141414` card + `#3a3a3c` buttons through `#1c1c1e` + `#4a4a4c`, `#6a6a6c`, finally to `#9a9a9c` buttons which are clearly visible
+- **Rounded rect rendering** — `create_polygon(smooth=True)` doesn't produce proper rounded corners in Tkinter. Replaced with simple `create_rectangle` for both drop zone border and NUKE button
+
 ## [2026-06-05] — v1.1.0
 
 ### Added
