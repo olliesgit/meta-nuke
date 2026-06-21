@@ -29,6 +29,7 @@ def main():
             '  meta_nuke --dir ./photos --recursive --output ./clean\n'
             '  meta_nuke --preview image.jpg\n'
             '  meta_nuke --noise-level 0 image.jpg    # lossless\n'
+            '  meta_nuke --ask-noise image.jpg          # prompt before noise\n'
             '  meta_nuke --log nuke.log --dir ./batch\n'
         ),
     )
@@ -43,6 +44,8 @@ def main():
     parser.add_argument('--noise-level', '-n', type=int, default=5,
                         choices=range(0, 11),
                         help='Forensic noise level 0-10 (0=off, 5=default, 10=max)')
+    parser.add_argument('--ask-noise', action='store_true',
+                        help='Prompt before applying forensic noise (y/N)')
     parser.add_argument('--preview', '-p', action='store_true',
                         help='Preview metadata before nuking (no changes)')
     parser.add_argument('--log', '-l', metavar='FILE',
@@ -121,8 +124,17 @@ def main():
             out_dir.mkdir(parents=True, exist_ok=True)
             output_path = str(out_dir / src.name)
 
+        effective_noise = args.noise_level
+        if args.ask_noise and effective_noise > 0:
+            try:
+                resp = input(f"  Apply forensic noise (level {effective_noise}) to {Path(file_path).name}? (y/N): ")
+                if resp.strip().lower() not in ('y', 'yes'):
+                    effective_noise = 0
+            except (EOFError, KeyboardInterrupt):
+                effective_noise = 0
+
         success, message = MetaNuke.nuke_image(
-            file_path, noise_level=args.noise_level, output_path=output_path,
+            file_path, noise_level=effective_noise, output_path=output_path,
         )
 
         if use_tqdm:

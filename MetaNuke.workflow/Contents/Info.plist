@@ -1,0 +1,84 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>ACTIONS</key>
+	<array>
+		<dict>
+			<key>Action</key>
+			<dict>
+				<key>ActionName</key>
+				<string>Run Shell Script</string>
+				<key>ActionUUID</key>
+				<string>3F0A1F2B-5D1E-4B3C-8A6D-7E2F1C4B5A3D</string>
+				<key>ActionVersion</key>
+				<integer>2</integer>
+				<key>BundleIdentifier</key>
+				<string>com.apple.automator.RunShellScript</string>
+				<key>MetaData</key>
+				<dict>
+					<key>CanUseNotification</key>
+					<true/>
+					<key>CanUseTextToSpeak</key>
+					<false/>
+					<key>ShowActionInSteps</key>
+					<true/>
+					<key>ShowWhenRun</key>
+					<false/>
+				</dict>
+				<key>Parameters</key>
+				<dict>
+					<key>COMMAND_STRING</key>
+					<string>cd /Users/olliesblog/02-tools/meta-nuke
+for f in "$@"; do
+  /Users/olliesblog/.pyenv/shims/python3 -m metanuke.cli --no-banner "$f"
+done
+osascript -e 'display notification "Metadata nuked from '$#' files" with title "Meta Nuke"'
+</string>
+					<key>inputMethod</key>
+					<integer>1</integer>
+					<key>shell</key>
+					<integer>0</integer>
+					<key>sourceFile</key>
+					<string></string>
+				</dict>
+				<key>Position</key>
+				<integer>0</integer>
+				<key>UUID</key>
+				<string>3F0A1F2B-5D1E-4B3C-8A6D-7E2F1C4B5A3D</string>
+			</dict>
+		</dict>
+	</array>
+	<key>ApplicationConstraints</key>
+	<dict>
+		<key>ExtendedFinderExtension</key>
+		<true/>
+	</dict>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>en</string>
+	<key>CFBundleIdentifier</key>
+	<string>com.underdogdigital.metanuke.quickaction</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleName</key>
+	<string>Nuke with MetaNuke</string>
+	<key>CFBundlePackageType</key>
+	<string>BNDL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>1.0</string>
+	<key>CFBundleSignature</key>
+	<string>????</string>
+	<key>CFBundleVersion</key>
+	<string>1</string>
+	<key>NSHumanReadableCopyright</key>
+	<string>© Underdog Digital</string>
+	<key>NSPrincipalClass</key>
+	<string>NSApplication</string>
+	<key>WFWorkflowIdentifier</key>
+	<string>com.underdogdigital.metanuke.quickaction</string>
+	<key>WFWorkflowName</key>
+	<string>Nuke with MetaNuke</string>
+	<key>WFWorkflowType</key>
+	<string>AMWorkflow</string>
+</dict>
+</plist>

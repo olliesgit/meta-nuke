@@ -52,6 +52,121 @@ class MetaNuke:
         SUPPORTED_FORMATS.add('.pdf')
 
     @staticmethod
+    def scan_metadata(file_path: str) -> dict:
+        """Scan a file and return a structured metadata report.
+
+        Returns a dict with:
+          name, path, size, format, dimensions, mode,
+          info: dict of PIL image.info items,
+          exif_keys: list of EXIF tag IDs,
+          binary_markers: list of detected binary markers (EXIF, XMP, ICC, etc.),
+          has_metadata: bool,
+          icc_profile: bool,
+          marker_details: human-readable list of what was found.
+        """
+        path = Path(file_path)
+        result = {
+            'name': path.name,
+            'path': file_path,
+            'size': path.stat().st_size if path.exists() else 0,
+            'format': path.suffix.lower(),
+            'dimensions': None,
+            'mode': None,
+            'info': {},
+            'exif_keys': [],
+            'binary_markers': [],
+            'has_metadata': False,
+            'icc_profile': False,
+            'marker_details': [],
+        }
+        if not path.exists():
+            return result
+
+        try:
+            with Image.open(file_path) as img:
+                result['dimensions'] = (img.width, img.height)
+                result['mode'] = img.mode
+                info = dict(img.info)
+                result['info'] = {}
+                for k, v in info.items():
+                    s = str(v)[:80]
+                    result['info'][str(k)] = s
+
+                # EXIF
+                if hasattr(img, '_getexif'):
+                    try:
+                        exif = img._getexif()
+                        if exif:
+                            result['exif_keys'] = sorted(str(k) for k in exif.keys())
+                    except Exception:
+                        pass
+
+                # ICC
+                if 'icc_profile' in info:
+                    result['icc_profile'] = True
+                    result['binary_markers'].append('ICC_PROFILE')
+                    result['marker_details'].append('ICC colour profile')
+
+        except Exception as e:
+            result['error'] = str(e)
+            return result
+
+        # Binary-level scan
+        raw = path.read_bytes()
+        markers = {
+            b'Exif\x00\x00': ('EXIF', 'EXIF camera/GPS data'),
+            b'<x:xmpmeta': ('XMP', 'XMP metadata packet'),
+            b'ICC_PROFILE\x00': ('ICC_PROFILE', 'ICC colour profile'),
+            b'Photoshop': ('Photoshop', 'Photoshop image data'),
+            b'xmlns:dc=': ('DublinCore', 'Dublin Core metadata'),
+            b'<rdf:RDF': ('RDF', 'RDF metadata'),
+            b'<?xpacket': ('XMP', 'XMP metadata packet'),
+        }
+        for sig, (label, detail) in markers.items():
+            if sig in raw:
+                if label not in result['binary_markers']:
+                    result['binary_markers'].append(label)
+                    result['marker_details'].append(detail)
+
+        # TIFF-specific
+        if result['format'] in ('.tiff', '.tif'):
+            if b'ImageDescription' in raw:
+                result['binary_markers'].append('ImageDescription')
+                result['marker_details'].append('TIFF image description')
+            if b'Software' in raw:
+                result['binary_markers'].append('Software')
+                result['marker_details'].append('Software tag')
+
+        result['has_metadata'] = bool(
+            result['info'] or result['exif_keys'] or result['binary_markers']
+        )
+        return result
+
+    @staticmethod
+    def compare_metadata(before: dict, after_path: str) -> dict:
+        """Compare metadata before and after nuking. Returns a diff dict."""
+        after = MetaNuke.scan_metadata(after_path)
+        removed_info = []
+        for k in before.get('info', {}):
+            if k not in after.get('info', {}):
+                removed_info.append(k)
+        removed_exif = []
+        for k in before.get('exif_keys', []):
+            if k not in after.get('exif_keys', []):
+                removed_exif.append(k)
+        removed_markers = []
+        for m in before.get('binary_markers', []):
+            if m not in after.get('binary_markers', []):
+                removed_markers.append(m)
+        return {
+            'removed_info': removed_info,
+            'removed_exif': removed_exif,
+            'removed_markers': removed_markers,
+            'was_clean': not before.get('has_metadata', False),
+            'is_clean': not after.get('has_metadata', True),
+        }
+
+    @staticmethod
     def nuke_image(file_path: str, noise_level: int = 5,
                    output_path: str = None) -> tuple[bool, str]:
         """Completely strip ALL metadata from an image by reconstructing it

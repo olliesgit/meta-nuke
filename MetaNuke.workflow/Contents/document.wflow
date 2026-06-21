@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>AMApplicationIdentifier</key>
+	<string>com.apple.finder</string>
+	<key>AMApplicationList</key>
+	<array>
+		<dict>
+			<key>AMApplication</key>
+			<string>Finder</string>
+			<key>AMExtensionIdentifier</key>
+			<string>com.apple.automator.Finder</string>
+		</dict>
+	</array>
+	<key>AMAttributes</key>
+	<dict>
+		<key>AMWorkspaceFloating</key>
+		<false/>
+		<key>AMWorkspaceShowsActionDescription</key>
+		<true/>
+		<key>AMWorkspaceShowsName</key>
+		<true/>
+		<key>AMWorkspaceShowsWorkflowPath</key>
+		<false/>
+	</dict>
+	<key>AMWorkflowContentPath</key>
+	<string>.</string>
+	<key>AMWorkflowType</key>
+	<string>AMWorkflow</string>
+	<key>AMWorkflowViewOrigin</key>
+	<string>{0, 0}</string>
+	<key>AMWorkflowViewSize</key>
+	<string>{1000, 600}</string>
+	<key>LoopCount</key>
+	<integer>1</integer>
+	<key>LoopMode</key>
+	<integer>1</integer>
+	<key>UTType</key>
+	<array>
+		<string>public.image</string>
+	</array>
+</dict>
+</plist>
