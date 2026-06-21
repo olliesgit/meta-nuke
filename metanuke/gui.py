@@ -341,11 +341,11 @@ class MetaNukeGUI:
                                        fg=TEXT_SEC if not self.output_dir else SUCCESS, anchor='w')
         self.out_dir_label.pack(side='left', fill='x', expand=True, padx=(10, 0))
         tk.Button(orow, text="Browse…", font=(FONT, 10),
-                  bg='#6a6a6c', fg=TEXT, bd=0, padx=10, pady=4,
-                  activebackground='#7a7a7c', activeforeground=TEXT,
+                  bg='#9a9a9c', fg='#000000', bd=0, padx=10, pady=4,
+                  activebackground='#aaaaac', activeforeground='#000000',
                   command=self._browse_output_dir).pack(side='right')
-        tk.Button(orow, text="✕", font=(FONT, 12), bg='#6a6a6c', fg=TEXT, bd=0, padx=8, pady=4,
-                  activebackground='#7a7a7c', activeforeground=ACCENT,
+        tk.Button(orow, text="✕", font=(FONT, 12), bg='#9a9a9c', fg='#000000', bd=0, padx=8, pady=4,
+                  activebackground='#aaaaac', activeforeground=ACCENT,
                   command=self._clear_output_dir).pack(side='right', padx=(0, 6))
 
         # ── Output suffix ──
@@ -366,8 +366,8 @@ class MetaNukeGUI:
         arow = tk.Frame(opts, bg=CARD_BG)
         arow.pack(fill='x', padx=16, pady=(12, 14))
         self.preview_btn = tk.Button(arow, text="Preview Metadata", font=(FONT, 11),
-                                      bg='#6a6a6c', fg=TEXT, bd=0, padx=12, pady=5,
-                                      activebackground='#7a7a7c', activeforeground=TEXT,
+                                      bg='#9a9a9c', fg='#000000', bd=0, padx=12, pady=5,
+                                      activebackground='#aaaaac', activeforeground='#000000',
                                       state='disabled', command=self._preview_metadata)
         self.preview_btn.pack(side='left')
         self.audit_checkbtn = tk.Checkbutton(arow, text="Audit Log", font=(FONT, 11),
