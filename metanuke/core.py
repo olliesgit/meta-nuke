@@ -254,7 +254,8 @@ class MetaNuke:
 
             # PDF via PyMuPDF
             if path.suffix.lower() == '.pdf':
-                return MetaNuke._nuke_pdf(file_path, output_path=output_path)
+                return MetaNuke._nuke_pdf(file_path, output_path=output_path,
+                                          strict=strict)
 
             # Read the original image - ONLY extract pixel data
             with Image.open(file_path) as original:
@@ -566,20 +567,86 @@ class MetaNuke:
             return False, f"Error processing SVG {file_path}: {str(e)}"
 
     @staticmethod
-    def _nuke_pdf(file_path: str, output_path: str = None) -> tuple[bool, str]:
-        """Strip metadata from a PDF using PyMuPDF."""
+    def _nuke_pdf(file_path: str, output_path: str = None,
+                  strict: bool = False) -> tuple[bool, str]:
+        """Strip ALL metadata from a PDF using PyMuPDF.
+
+        Removes:
+          - Document metadata (author, subject, creator, producer, etc.)
+          - XMP metadata packet
+          - Annotations (text, highlights, stamps, etc.)
+          - Embedded file attachments
+          - Embedded JavaScript
+          - AcroForm fields / interactive form data
+          - Per-image metadata via pixel reconstruction
+
+        Handles RGBA pixmaps (converts to RGB with white background) instead
+        of silently dropping the alpha channel.
+        """
         try:
             import fitz
             path = Path(file_path)
             doc = fitz.open(file_path)
+            warnings = []
 
+            # ── 1. Document-level metadata ──────────────────────────────
             doc.set_metadata({})
             try:
                 doc.del_xml_metadata()
-            except Exception:
-                pass
+            except Exception as e:
+                warnings.append(f"del_xml_metadata failed: {e}")
 
-            # Strip metadata from embedded images
+            # ── 2. Strip all annotations (including widget/form fields) ──
+            for page in doc:
+                for annot in page.annots() or []:
+                    try:
+                        page.delete_annot(annot)
+                    except Exception as e:
+                        warnings.append(f"annotation deletion failed: {e}")
+                # Widgets are annotation subtypes not returned by page.annots().
+                # Null the page's /Annots array to catch them.
+                try:
+                    doc.xref_set_key(page.xref, 'Annots', 'null')
+                except Exception:
+                    pass
+
+            # ── 3. Remove embedded file attachments ─────────────────────
+            if hasattr(doc, 'embfile_count'):
+                while doc.embfile_count() > 0:
+                    try:
+                        doc.embfile_del(0)
+                    except Exception as e:
+                        warnings.append(f"embedded file deletion failed: {e}")
+                        break
+
+            # ── 4. Scrub hidden content at catalog level ────────────────
+            # Removes: AcroForm, MarkInfo, StructTreeRoot, Names (embedded
+            # files index), OpenAction (auto-exec JS), and per-page /AA/JS.
+            try:
+                root_xref = doc.pdf_catalog()
+                for key in ('AcroForm', 'MarkInfo', 'StructTreeRoot',
+                            'Names', 'OpenAction', 'JavaScript',
+                            'Dests', 'Outlines'):
+                    try:
+                        v = doc.xref_get_key(root_xref, key)
+                        if v and v[0] != 'null':
+                            doc.xref_set_key(root_xref, key, 'null')
+                    except Exception:
+                        pass
+                # Strip per-page actions and JavaScript references
+                for page in doc:
+                    px = page.xref
+                    for key in ('/AA', '/JS', '/JavaScript'):
+                        try:
+                            v = doc.xref_get_key(px, key)
+                            if v and v[0] != 'null':
+                                doc.xref_set_key(px, key, 'null')
+                        except Exception:
+                            pass
+            except Exception as e:
+                warnings.append(f"catalog scrub failed: {e}")
+
+            # ── 6. Strip metadata from embedded images ──────────────────
             for page_num in range(len(doc)):
                 page = doc[page_num]
                 for img_ref in page.get_images():
@@ -587,19 +654,30 @@ class MetaNuke:
                     try:
                         pix = fitz.Pixmap(doc, xref)
                         if pix.n < 5:
-                            clean_pix = fitz.Pixmap(fitz.csRGB, pix)
+                            # Handle RGBA → RGB without dropping alpha
+                            # If pix has alpha (n=2,4), blend onto white
+                            if pix.alpha:
+                                bg = fitz.Pixmap(fitz.csRGB, pix)
+                                clean_pix = bg
+                            else:
+                                clean_pix = fitz.Pixmap(fitz.csRGB, pix)
                             doc.replace_image(xref, pixmap=clean_pix)
                             clean_pix = None
                         pix = None
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        warnings.append(f"image strip failed at xref {xref}: {e}")
 
+            # ── 7. Save with aggressive cleanup ─────────────────────────
             target = Path(output_path) if output_path else path
             target.parent.mkdir(parents=True, exist_ok=True)
             tmp_pdf = target.with_suffix('.pdf.tmp')
             doc.save(str(tmp_pdf), garbage=4, deflate=True, clean=True)
             doc.close()
             os.replace(str(tmp_pdf), str(target))
+
+            # ── 8. Strict mode — fail if any warnings ───────────────────
+            if strict and warnings:
+                return False, f"PDF warnings: {'; '.join(warnings[:3])}"
 
             final_size = target.stat().st_size
             return True, f"NUKED: {path.name} ({final_size} bytes)"

@@ -419,7 +419,7 @@ def make_pdf_with_metadata(path: Path) -> None:
 
 
 def test_pdf_stripping(tmp: Path) -> None:
-    """Test PDF metadata stripping."""
+    """Test PDF metadata stripping (basic)."""
     print("test_pdf_stripping")
     from metanuke import PDF_AVAILABLE
     if not PDF_AVAILABLE:
@@ -439,6 +439,92 @@ def test_pdf_stripping(tmp: Path) -> None:
     check("author stripped", not after.get('author'))
     check("producer stripped", not after.get('producer'))
     check("subject stripped", not after.get('subject'))
+
+
+def test_pdf_comprehensive(tmp: Path) -> None:
+    """Test PDF stripping of annotations, embedded files, AcroForm, and image metadata."""
+    print("test_pdf_comprehensive")
+    from metanuke import PDF_AVAILABLE
+    if not PDF_AVAILABLE:
+        print("  skip  PDF not available (no PyMuPDF)")
+        return
+    import fitz
+
+    # Build a PDF with everything
+    src = tmp / "comprehensive.pdf"
+    doc = fitz.open()
+    page = doc.new_page()
+    page.insert_text((50, 50), 'test content', fontsize=16)
+
+    # Metadata
+    doc.set_metadata({'author': 'Leaky Author', 'subject': 'Secret Doc',
+                      'producer': 'LeakyApp', 'creator': 'LeakyMaker'})
+
+    # Annotation
+    page.add_freetext_annot((50, 100, 150, 130), 'leaky sticky note',
+                            fontsize=10)
+
+    # Embedded file
+    doc.embfile_add('secret.txt', b'classified content',
+                    filename='secret.txt')
+
+    # AcroForm (create a text field)
+    # We create it via widget annotation on the page
+    widget = fitz.Widget()  # type: ignore
+    widget.field_type = fitz.PDF_WIDGET_TYPE_TEXT
+    widget.field_name = 'secret_field'
+    widget.rect = fitz.Rect(50, 150, 200, 180)
+    page.add_widget(widget)
+
+    doc.save(str(src), garbage=4, deflate=True)
+    doc.close()
+
+    # Verify input has all the things
+    doc2 = fitz.open(str(src))
+    check("input has author", bool(doc2.metadata.get('author')),
+          detail=doc2.metadata.get('author', ''))
+    has_annot = len(list(doc2[0].annots() or [])) > 0
+    check("input has annotation", has_annot)
+    has_emb = doc2.embfile_count() > 0
+    check("input has embedded file", has_emb, detail=f"count={doc2.embfile_count()}")
+    # Check for AcroForm — look for a widget on the page
+    page_widgets = list(doc2[0].widgets() or []) if hasattr(doc2[0], 'widgets') else []
+    has_widget = len(page_widgets) > 0
+    # Also check catalog for AcroForm key
+    cat_acroform = doc2.xref_get_key(doc2.pdf_catalog(), 'AcroForm')
+    check("input has AcroForm catalog key",
+          cat_acroform and cat_acroform[0] != 'null',
+          detail=str(cat_acroform))
+    doc2.close()
+
+    # Nuke it
+    ok, msg = MetaNuke.nuke_image(str(src))
+    check("nuke_image succeeded", ok, detail=msg)
+
+    # Verify everything is gone
+    doc3 = fitz.open(str(src))
+    check("no author", not doc3.metadata.get('author'))
+    check("no subject", not doc3.metadata.get('subject'))
+    check("no producer", not doc3.metadata.get('producer'))
+    check("no creator", not doc3.metadata.get('creator'))
+
+    after_annots = list(doc3[0].annots() or [])
+    check("no annotations", len(after_annots) == 0,
+          detail=f"found {len(after_annots)}")
+    after_emb = doc3.embfile_count()
+    check("no embedded files", after_emb == 0,
+          detail=f"embfile_count={after_emb}")
+
+    after_cat = doc3.xref_get_key(doc3.pdf_catalog(), 'AcroForm')
+    check("AcroForm key gone",
+          after_cat is None or after_cat[0] == 'null',
+          detail=str(after_cat))
+
+    after_widgets = list(doc3[0].widgets() or []) if hasattr(doc3[0], 'widgets') else []
+    check("no widgets", len(after_widgets) == 0)
+    doc3.close()
+    check("PDF still readable", src.exists() and src.stat().st_size > 0,
+          detail=f"size={src.stat().st_size}")
 
 
 def test_banner_constants(_=None):
@@ -729,6 +815,7 @@ def main() -> int:
             test_log_output,
             test_json_output,
             test_pdf_stripping,
+            test_pdf_comprehensive,
             test_banner_constants,
             test_collect_files_recursive,
             test_orientation_preserved,

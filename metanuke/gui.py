@@ -71,6 +71,8 @@ TOOLTIPS = {
     'audit_log': 'Save a log of all nuke operations to file.',
     'nuke_btn': 'Strip all metadata from the selected file(s).\nThis cannot be undone.',
     'drop_zone': 'Drop image files here or click to browse.\nSupports: JPG, PNG, GIF, WEBP, TIFF, BMP, SVG, AVIF, HEIC, PDF',
+    'strict': 'Fail any file where a silently-swallowed operation\n(ICC conversion, PDF image strip) occurred.',
+    'rename': 'Replace output filenames with SHA256 content-hash\n(first 16 hex chars). Requires an output directory.',
 }
 
 
@@ -165,6 +167,8 @@ class MetaNukeGUI:
         self.lossless_mode = tk.BooleanVar(value=False)
         self.audit_logging = tk.BooleanVar(value=False)
         self.backup_enabled = tk.BooleanVar(value=False)
+        self.strict_enabled = tk.BooleanVar(value=False)
+        self.rename_enabled = tk.BooleanVar(value=False)
         self.output_dir: Optional[str] = None
         self.output_suffix = tk.StringVar(value="")
         self.is_processing = False
@@ -200,6 +204,9 @@ class MetaNukeGUI:
         ToolTip(self.out_dir_label, TOOLTIPS['output_dir'])
         ToolTip(self.preview_btn, TOOLTIPS['preview'])
         ToolTip(self.audit_checkbtn, TOOLTIPS['audit_log'])
+        ToolTip(self.backup_checkbtn, '' if not hasattr(self, 'backup_checkbtn') else TOOLTIPS.get('backup', ''))
+        ToolTip(self.strict_checkbtn, TOOLTIPS['strict'])
+        ToolTip(self.rename_checkbtn, TOOLTIPS['rename'])
         ToolTip(self.nuke_button, TOOLTIPS['nuke_btn'])
 
     def _setup_keyboard_shortcuts(self):
@@ -392,6 +399,18 @@ class MetaNukeGUI:
                                               activebackground=CARD_BG, activeforeground=TEXT,
                                               onvalue=True, offvalue=False)
         self.backup_checkbtn.pack(side='left', padx=(14, 0))
+        self.strict_checkbtn = tk.Checkbutton(arow, text="Strict", font=(FONT, 11),
+                                              variable=self.strict_enabled, bg=CARD_BG,
+                                              fg=TEXT_SEC, selectcolor='#3a3a3c',
+                                              activebackground=CARD_BG, activeforeground=TEXT,
+                                              onvalue=True, offvalue=False)
+        self.strict_checkbtn.pack(side='left', padx=(14, 0))
+        self.rename_checkbtn = tk.Checkbutton(arow, text="Rename", font=(FONT, 11),
+                                              variable=self.rename_enabled, bg=CARD_BG,
+                                              fg=TEXT_SEC, selectcolor='#3a3a3c',
+                                              activebackground=CARD_BG, activeforeground=TEXT,
+                                              onvalue=True, offvalue=False)
+        self.rename_checkbtn.pack(side='left', padx=(14, 0))
         tk.Label(arow, text="⌘O open  ·  ⌘N nuke  ·  ⌘P preview  ·  ⎋ clear",
                  font=(FONT, 8), bg=CARD_BG, fg=TEXT_MUTED).pack(side='right')
 
@@ -740,6 +759,8 @@ class MetaNukeGUI:
                 fp, noise_level=noise_lvl,
                 output_path=output_path,
                 backup=self.backup_enabled.get(),
+                strict=self.strict_enabled.get(),
+                rename=self.rename_enabled.get() if bool(self.output_dir) else False,
             )
             results.append((fp, success, message))
 
@@ -808,6 +829,8 @@ class MetaNukeGUI:
             'output_dir': self.output_dir,
             'audit_log': self.audit_logging.get(),
             'output_suffix': suffix,
+            'strict': self.strict_enabled.get(),
+            'rename': self.rename_enabled.get(),
         }, self.config_path)
 
         # Reset

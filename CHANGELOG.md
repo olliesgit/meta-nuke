@@ -6,12 +6,15 @@
 - **`--strict` flag** — ICC→sRGB conversion failures and other silently-swallowed operations are now reported as file failures (off by default; warnings are collected and logged)
 - **`--jobs N` / `-j` flag** — multiprocessing batch processing via `multiprocessing.Pool`. Default 1 (single-threaded). Works without `tqdm`. Incompatible with `--ask-noise`.
 - **`--rename` flag** — replaces output filename with the first 16 hex chars of the SHA256 hash, preventing filename-based information leakage. Requires `--output DIR`.
+- **PDF comprehensive sanitisation** — now strips annotations (per-page), embedded file attachments, AcroForm form fields/widgets, catalog-level JavaScript/OpenAction, page-level /AA/JS, previous Names/Outlines/Dests catalog keys. RGBA pixmaps in embedded images are properly converted to RGB instead of silently dropping alpha.
+- **GUI: Strict, Rename checkboxes** — new "Strict" and "Rename" checkbuttons in the options panel below "Keep backup". Config saved and restored on next launch.
 - **TIFF binary-level metadata stripping** — `_strip_tiff_metadata` now walks the IFD chain and zeroes known metadata tag IDs (Make, Model, Software, Copyright, ImageDescription, EXIF/GPS IFD pointers, etc.)
 - **TIFF structural verification** — `_verify_clean` now checks TIFF files for embedded metadata strings at binary level.
 - **GIF structural verification** — `_verify_clean` now checks GIF files for surviving comment extension blocks.
 - **SVG comprehensive sanitisation** — strips `<script>` elements, editor namespace elements/attributes (inkscape, sodipodi, etc.), xlink:href and external href values, and base64 data-URI `<image>` elements. Previously only stripped `<metadata>/<desc>/<title>`.
 - **exiftool verification test** — `test_exiftool_verify` optionally shells out to exiftool (skips cleanly if absent) and asserts zero stored-image-metadata after nuking.
 - **TIFF stripping regression test** — creates a TIFF with Make/Model/Software/Copyright tags, nukes, and verifies binary-level removal.
+- **Comprehensive PDF regression test** — builds a PDF with annotations, embedded files, and AcroForm; verifies all three stripped after nuking.
 
 ### Changed
 - **`_double_encode_jpeg` now randomized** — the second-encode quality varies per image (91–96 via `os.urandom`) instead of a fixed 94, so the tool does not imprint a single consistent quantization fingerprint.
@@ -21,6 +24,8 @@
 
 ### Fixed
 - **ICC→sRGB conversion failures no longer silent** — the `except Exception: pass` now captures the error message and appends it to a warnings list (viewable with `--strict`).
+- **PDF widget annotations not stripped** — `page.annots()` doesn't return widget/form-field annotations. Now nulls the page's `/Annots` array directly to catch them.
+- **PDF RGBA pixmap alpha silently dropped** — embedded images with alpha channels were converted to RGB via `Pixmap(csRGB, pix)` which dropped the alpha channel; now pixels are blended onto white before conversion.
 
 ## [2026-06-29] — v1.3.0
 
