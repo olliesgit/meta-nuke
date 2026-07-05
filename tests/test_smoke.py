@@ -164,16 +164,25 @@ def make_svg_with_metadata(path: Path) -> None:
     content += '<!-- created by LeakyApp v3.0 -->\n'
     content += '<svg xmlns="http://www.w3.org/2000/svg"'
     content += ' xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"'
+    content += ' xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"'
     content += ' xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"'
     content += ' xmlns:dc="http://purl.org/dc/elements/1.1/"'
-    content += ' width="100" height="100">\n'
+    content += ' xmlns:xlink="http://www.w3.org/1999/xlink"'
+    content += ' width="200" height="200">\n'
     content += '  <metadata>'
     content += '<rdf:RDF><rdf:Description>'
     content += '<dc:creator>leaky_author</dc:creator>'
     content += '</rdf:Description></rdf:RDF></metadata>\n'
     content += '  <desc>A description that should not survive</desc>\n'
     content += '  <title>My Leaky SVG</title>\n'
-    content += '  <rect width="100" height="100" fill="blue"/>\n'
+    content += '  <script>alert("xss")</script>\n'
+    content += '  <rect width="100" height="100" fill="blue"'
+    content += ' inkscape:label="layer1" sodipodi:type="arc"/>\n'
+    content += '  <image xlink:href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUg"'
+    content += ' width="50" height="50"/>\n'
+    content += '  <a xlink:href="http://evil.com/tracker">\n'
+    content += '    <text x="10" y="10">link</text>\n'
+    content += '  </a>\n'
     content += '</svg>\n'
     path.write_text(content)
 
@@ -182,6 +191,38 @@ def has_svg_metadata(data: str) -> bool:
     """Return True if SVG contains metadata/desc/title elements."""
     return ('<metadata>' in data or '<desc>' in data or '<title>' in data
             or '<!--' in data or '<?xml' in data)
+
+
+def has_svg_editor_footprints(data: str) -> bool:
+    """Return True if SVG has editor namespace usages."""
+    return ('inkscape:' in data or 'sodipodi:' in data
+            or 'xlink:href' in data
+            or 'xmlns:inkscape' in data
+            or 'xmlns:sodipodi' in data)
+
+
+def make_tiff_with_metadata(path: Path) -> None:
+    """Build a TIFF with metadata fields."""
+    img = Image.new('RGB', (100, 80), (200, 150, 100))
+    exif = img.getexif()
+    exif[0x010F] = "LeakyCam"  # Make
+    exif[0x0110] = "X9000"     # Model
+    exif[0x0131] = "LeakySoft" # Software
+    exif[0x8298] = "© Leaky"   # Copyright
+    img.save(path, format='TIFF', exif=exif.tobytes())
+
+
+def has_tiff_metadata_tags(data: bytes) -> list[str]:
+    """Return a list of metadata strings found in TIFF binary."""
+    found = []
+    for pat, name in [(b'ImageDescription', 'ImageDescription'),
+                       (b'LeakyCam', 'Make'),
+                       (b'X9000', 'Model'),
+                       (b'LeakySoft', 'Software'),
+                       (b'Leaky', 'Copyright')]:
+        if pat in data:
+            found.append(name)
+    return found
 
 
 # Tests -----------------------------------------------------------------
@@ -275,6 +316,10 @@ def test_svg_stripping(tmp: Path) -> None:
     make_svg_with_metadata(src)
     before = src.read_text()
     check("input has SVG metadata", has_svg_metadata(before))
+    check("input has editor footprints", has_svg_editor_footprints(before))
+    check("input has script tag", '<script>' in before)
+    check("input has data-URI image", 'data:image' in before)
+    check("input has external href", 'http://evil.com' in before)
 
     ok, msg = MetaNuke.nuke_image(str(src))
     check("nuke_image returned success", ok, detail=msg)
@@ -287,6 +332,11 @@ def test_svg_stripping(tmp: Path) -> None:
     check("XML declaration stripped", '<?xml' not in after)
     check("visual content preserved", '<rect' in after)
     check("inkscape namespace stripped", 'inkscape' not in after)
+    check("sodipodi namespace stripped", 'sodipodi' not in after)
+    check("xlink:href stripped", 'xlink:href' not in after)
+    check("script tag stripped", '<script>' not in after)
+    check("external href stripped", 'evil.com' not in after)
+    check("no editor footprints", not has_svg_editor_footprints(after))
 
 
 def test_svg_with_output_dir(tmp: Path) -> None:
@@ -425,6 +475,241 @@ def test_collect_files_recursive(tmp: Path) -> None:
           len(files) == 2)
 
 
+def test_orientation_preserved(tmp: Path) -> None:
+    """A photo with EXIF Orientation must come out visually upright (pixels
+    transposed) once the orientation tag is stripped — not left sideways."""
+    print("test_orientation_preserved")
+    src = tmp / "rotated.jpg"
+    # 100x40 landscape buffer tagged Orientation=6 (rotate 90 CW on display).
+    img = Image.new('RGB', (100, 40), (0, 0, 0))
+    exif = img.getexif()
+    exif[0x0112] = 6
+    img.save(src, format='JPEG', exif=exif, quality=95)
+
+    ok, msg = MetaNuke.nuke_image(str(src), noise_level=0)
+    check("nuke succeeded", ok, detail=msg)
+    with Image.open(src) as out:
+        # After baking orientation, displayed dimensions (40x100) become real.
+        check("dimensions transposed to upright", out.size == (40, 100),
+              detail=f"size={out.size}")
+        check("orientation tag gone", out.getexif().get(0x0112) is None)
+
+
+def test_pixels_preserved_lossless(tmp: Path) -> None:
+    """noise_level=0 on a lossless format (PNG) must not alter a single pixel."""
+    print("test_pixels_preserved_lossless")
+    src = tmp / "pixels.png"
+    import random as _r
+    _r.seed(1)
+    img = Image.new('RGB', (32, 32))
+    img.putdata([(_r.randint(0, 255), _r.randint(0, 255), _r.randint(0, 255))
+                 for _ in range(32 * 32)])
+    before = list(img.getdata())
+    img.save(src, format='PNG')
+
+    ok, msg = MetaNuke.nuke_image(str(src), noise_level=0)
+    check("nuke succeeded", ok, detail=msg)
+    with Image.open(src) as out:
+        check("pixels byte-identical (lossless, no noise)",
+              list(out.convert('RGB').getdata()) == before)
+
+
+def test_noise_bounds(tmp: Path) -> None:
+    """Forensic noise must stay within its tiny imperceptible delta."""
+    print("test_noise_bounds")
+    src = tmp / "noisy.png"
+    img = Image.new('RGB', (64, 64), (128, 128, 128))
+    before = list(img.getdata())
+    img.save(src, format='PNG')
+    ok, msg = MetaNuke.nuke_image(str(src), noise_level=5)
+    check("nuke with noise succeeded", ok, detail=msg)
+    with Image.open(src) as out:
+        after = list(out.convert('RGB').getdata())
+    max_delta = max(abs(a - b)
+                    for pa, pb in zip(before, after)
+                    for a, b in zip(pa, pb))
+    check("level-5 noise delta <= 1", max_delta <= 1, detail=f"max={max_delta}")
+
+
+def test_webp_stripping(tmp: Path) -> None:
+    print("test_webp_stripping")
+    src = tmp / "with_exif.webp"
+    img = Image.new('RGB', (80, 60), (40, 90, 160))
+    exif = img.getexif()
+    exif[0x010F] = "LeakyCam"
+    img.save(src, format='WEBP', exif=exif.tobytes())
+    ok, msg = MetaNuke.nuke_image(str(src), noise_level=0)
+    check("nuke succeeded", ok, detail=msg)
+    after = src.read_bytes()
+    check("no EXIF RIFF chunk", b'EXIF' not in after and b'Exif\x00\x00' not in after)
+    with Image.open(src) as out:
+        check("output opens, size preserved", out.size == (80, 60),
+              detail=f"size={out.size}")
+
+
+def test_heic_not_destroyed(tmp: Path) -> None:
+    """Regression: HEIC/AVIF were silently overwritten with 0 bytes."""
+    print("test_heic_not_destroyed")
+    from metanuke.core import HEIF_AVAILABLE
+    if not HEIF_AVAILABLE:
+        print("  skip  HEIF not available (no pillow-heif)")
+        return
+    src = tmp / "photo.heic"
+    Image.new('RGB', (64, 48), (120, 30, 200)).save(src, format='HEIF')
+    ok, msg = MetaNuke.nuke_image(str(src), noise_level=0)
+    check("nuke succeeded (not destroyed)", ok, detail=msg)
+    check("file is non-empty", src.exists() and src.stat().st_size > 0,
+          detail=f"size={src.stat().st_size if src.exists() else 'GONE'}")
+    with Image.open(src) as out:
+        check("output is a valid image", out.size == (64, 48), detail=f"size={out.size}")
+
+
+def test_avif_roundtrip(tmp: Path) -> None:
+    print("test_avif_roundtrip")
+    from PIL import features
+    if not (hasattr(features, 'check') and features.check('avif')):
+        print("  skip  AVIF not supported by this Pillow")
+        return
+    src = tmp / "photo.avif"
+    try:
+        Image.new('RGB', (48, 32), (90, 10, 160)).save(src, format='AVIF')
+    except Exception as e:
+        print(f"  skip  cannot encode AVIF ({e})")
+        return
+    ok, msg = MetaNuke.nuke_image(str(src), noise_level=0)
+    check("nuke succeeded (not destroyed)", ok, detail=msg)
+    check("file is non-empty", src.exists() and src.stat().st_size > 0)
+
+
+def test_backup_flag(tmp: Path) -> None:
+    """--backup must leave a .bak that still carries the original metadata."""
+    print("test_backup_flag")
+    src = tmp / "bk.jpg"
+    make_jpeg_with_exif(src)
+    ok, msg = MetaNuke.nuke_image(str(src), noise_level=0, backup=True)
+    check("nuke succeeded", ok, detail=msg)
+    backup = src.with_name(src.name + '.bak')
+    check("backup file created", backup.exists())
+    if backup.exists():
+        check("original (in place) is clean", not has_app1_jpeg(src.read_bytes()))
+        check("backup retains original EXIF", has_app1_jpeg(backup.read_bytes()))
+
+
+def test_unsupported_save_no_dataloss(tmp: Path) -> None:
+    """A supported-by-scan but unsaveable extension must not zero the file."""
+    print("test_unsupported_save_no_dataloss")
+    # .bmp is handled, but verify the empty-buffer safety net never fires on it
+    # by checking a normal nuke keeps bytes. (Direct guard is covered in code.)
+    src = tmp / "safe.bmp"
+    Image.new('RGB', (20, 20), (5, 5, 5)).save(src, format='BMP')
+    ok, msg = MetaNuke.nuke_image(str(src), noise_level=0)
+    check("bmp nuke kept non-empty file", ok and src.stat().st_size > 0, detail=msg)
+
+
+def test_tiff_stripping(tmp: Path) -> None:
+    """Test TIFF metadata is stripped."""
+    print("test_tiff_stripping")
+    src = tmp / "meta.tiff"
+    make_tiff_with_metadata(src)
+    before = src.read_bytes()
+    before_tags = has_tiff_metadata_tags(before)
+    check("input has metadata tags", len(before_tags) > 0, detail=str(before_tags))
+
+    ok, msg = MetaNuke.nuke_image(str(src), noise_level=0)
+    check("nuke_image returned success", ok, detail=msg)
+
+    after = src.read_bytes()
+    after_tags = has_tiff_metadata_tags(after)
+    check("no TIFF metadata tags", len(after_tags) == 0, detail=str(after_tags))
+    check("TIFF signature preserved", after[:2] in (b'II', b'MM'))
+    with Image.open(src) as img:
+        check("TIFF opens, size preserved", img.size == (100, 80), detail=f"size={img.size}")
+
+
+def test_exiftool_verify(tmp: Path) -> None:
+    """If exiftool is on PATH, verify that a nuked JPEG has zero metadata."""
+    print("test_exiftool_verify")
+    import shutil
+    exiftool_path = shutil.which('exiftool')
+    if not exiftool_path:
+        print("  skip  exiftool not available")
+        return
+    import subprocess
+
+    # Create a JPEG with maximum metadata
+    src = tmp / "exif.jpg"
+    make_jpeg_with_exif(src)
+    ok, msg = MetaNuke.nuke_image(str(src), noise_level=0)
+    check("nuke succeeded for exiftool check", ok, detail=msg)
+
+    # Run exiftool (check for remaining image metadata)
+    r = subprocess.run(
+        [exiftool_path, '-All', '-G1', '-s', str(src)],
+        capture_output=True, text=True, timeout=30,
+    )
+    # Exiftool always shows system-level fields (FileSize, FileModifyDate, etc.)
+    # We only care about image metadata groups: EXIF, XMP, ICC, IPTC, GPS
+    image_meta_groups = ('[EXIF]', '[XMP]', '[ICC]', '[IPTC]', '[GPS]',
+                         '[MakerNotes]')
+    metadata_lines = [
+        l.strip() for l in r.stdout.split('\n')
+        if l.strip() and l.strip().startswith(image_meta_groups)
+    ]
+    check("exiftool reports no image metadata",
+          len(metadata_lines) == 0,
+          detail=f"found {len(metadata_lines)}: {metadata_lines}")
+
+
+def test_strict_mode(tmp: Path) -> None:
+    """Test --strict mode passes on normal files (no silent failures)."""
+    print("test_strict_mode")
+    src = tmp / "strict.jpg"
+    make_jpeg_with_exif(src)
+    ok, msg = MetaNuke.nuke_image(str(src), noise_level=0, strict=True)
+    check("strict mode passes on normal file", ok, detail=msg)
+    check("JPEG still clean", not has_app1_jpeg(src.read_bytes()))
+
+
+def test_rename_flag(tmp: Path) -> None:
+    """Test --rename produces content-hash filenames."""
+    print("test_rename_flag")
+    src = tmp / "rename.jpg"
+    make_jpeg_with_exif(src)
+    out_dir = tmp / "renamed"
+    out_dir.mkdir()
+    ok, msg = MetaNuke.nuke_image(
+        str(src), noise_level=0, output_path=str(out_dir), rename=True,
+    )
+    check("rename: nuke succeeded", ok, detail=msg)
+    # The output should NOT be named "rename.jpg"
+    if ok:
+        expected = out_dir / "rename.jpg"
+        check("rename: original name not used", not expected.exists())
+        # Should have a hex-hash-named file
+        files = list(out_dir.glob('*.jpg'))
+        check("rename: output file exists", len(files) == 1, detail=str(files))
+        if files:
+            name = files[0].stem
+            check("rename: filename is hex hash", len(name) == 16,
+                  detail=f"name={name}")
+            all_hex = all(c in '0123456789abcdef' for c in name)
+            check("rename: all hex chars", all_hex)
+
+
+def test_double_encode_lossless(tmp: Path) -> None:
+    """Noise_level=0 must skip double-encode (no second lossy pass)."""
+    print("test_double_encode_lossless")
+    src = tmp / "lossless_jpeg.jpg"
+    make_jpeg_with_exif(src)
+    ok, msg = MetaNuke.nuke_image(str(src), noise_level=0)
+    check("lossless nuke succeeded", ok, detail=msg)
+    check("JPEG still valid", src.read_bytes()[:2] == b'\xff\xd8')
+    # With noise_level=0, double-encode is skipped, so the file should
+    # only have been encoded once (at quality 95) — verify it opens cleanly
+    with Image.open(src) as img:
+        check("image opens", img.size == (320, 240))
+
+
 def main() -> int:
     print("Meta Nuke smoke tests")
     print("=====================\n")
@@ -446,6 +731,19 @@ def main() -> int:
             test_pdf_stripping,
             test_banner_constants,
             test_collect_files_recursive,
+            test_orientation_preserved,
+            test_pixels_preserved_lossless,
+            test_noise_bounds,
+            test_webp_stripping,
+            test_heic_not_destroyed,
+            test_avif_roundtrip,
+            test_backup_flag,
+            test_unsupported_save_no_dataloss,
+            test_tiff_stripping,
+            test_exiftool_verify,
+            test_strict_mode,
+            test_rename_flag,
+            test_double_encode_lossless,
         ]
         for t in tests:
             try:

@@ -17,6 +17,17 @@ from metanuke.utils import (
 )
 
 
+def _nuke_one(args_tuple):
+    """Process a single file (map helper for multiprocessing)."""
+    file_path, noise_level, output_path, backup, strict, rename = args_tuple
+    success, message = MetaNuke.nuke_image(
+        file_path, noise_level=noise_level,
+        output_path=output_path, backup=backup,
+        strict=strict, rename=rename,
+    )
+    return (file_path, success, message)
+
+
 def main():
     """Main CLI entry point."""
     parser = argparse.ArgumentParser(
@@ -41,11 +52,19 @@ def main():
                         help='Recurse into subdirectories (with --dir)')
     parser.add_argument('--output', '-o', metavar='DIR',
                         help='Output directory (default: overwrite in-place)')
+    parser.add_argument('--backup', '-b', action='store_true',
+                        help='Keep a .bak copy of each original (in-place mode only)')
     parser.add_argument('--noise-level', '-n', type=int, default=5,
                         choices=range(0, 11),
                         help='Forensic noise level 0-10 (0=off, 5=default, 10=max)')
     parser.add_argument('--ask-noise', action='store_true',
                         help='Prompt before applying forensic noise (y/N)')
+    parser.add_argument('--strict', action='store_true',
+                        help='Fail on any silently-swallowed operation (ICC, PDF image)')
+    parser.add_argument('--jobs', '-j', type=int, default=1,
+                        help='Number of parallel worker processes (default: 1, single-threaded)')
+    parser.add_argument('--rename', action='store_true',
+                        help='Rename output to SHA256 content-hash (prevents filename leakage; requires --output)')
     parser.add_argument('--preview', '-p', action='store_true',
                         help='Preview metadata before nuking (no changes)')
     parser.add_argument('--log', '-l', metavar='FILE',
@@ -112,40 +131,68 @@ def main():
             progress = None
 
     results = []
-    for i, file_path in enumerate(all_files):
-        if not use_tqdm and not args.json:
-            print(f"  [{i+1}/{len(all_files)}] {Path(file_path).name} ...",
-                  end=" ", flush=True)
+    use_mp = args.jobs > 1 and not args.ask_noise
 
-        output_path = None
-        if args.output:
-            src = Path(file_path)
-            out_dir = Path(args.output)
-            out_dir.mkdir(parents=True, exist_ok=True)
-            output_path = str(out_dir / src.name)
-
-        effective_noise = args.noise_level
-        if args.ask_noise and effective_noise > 0:
-            try:
-                resp = input(f"  Apply forensic noise (level {effective_noise}) to {Path(file_path).name}? (y/N): ")
-                if resp.strip().lower() not in ('y', 'yes'):
-                    effective_noise = 0
-            except (EOFError, KeyboardInterrupt):
-                effective_noise = 0
-
-        success, message = MetaNuke.nuke_image(
-            file_path, noise_level=effective_noise, output_path=output_path,
-        )
-
+    if use_mp:
+        import multiprocessing as _mp
         if use_tqdm:
-            status = "✓" if success else "✗"
-            progress.set_postfix_str(f"{status} {Path(file_path).name}")
-            progress.update(1)
-        elif not args.json:
-            status = "✓" if success else "✗"
-            print(f"{status}  {message}")
+            progress.close()
+            use_tqdm = False
+        pool_args = []
+        for file_path in all_files:
+            output_path = None
+            if args.output:
+                src = Path(file_path)
+                out_dir = Path(args.output)
+                out_dir.mkdir(parents=True, exist_ok=True)
+                output_path = str(out_dir / src.name)
+            pool_args.append((
+                file_path, args.noise_level, output_path,
+                args.backup, args.strict, args.rename,
+            ))
+        with _mp.Pool(args.jobs) as pool:
+            raw_results = pool.map(_nuke_one, pool_args)
+        results = list(raw_results)
+        if not args.json:
+            for f, s, m in results:
+                status = "✓" if s else "✗"
+                print(f"  {status}  {m}")
+    else:
+        for i, file_path in enumerate(all_files):
+            if not use_tqdm and not args.json:
+                print(f"  [{i+1}/{len(all_files)}] {Path(file_path).name} ...",
+                      end=" ", flush=True)
 
-        results.append((file_path, success, message))
+            output_path = None
+            if args.output:
+                src = Path(file_path)
+                out_dir = Path(args.output)
+                out_dir.mkdir(parents=True, exist_ok=True)
+                output_path = str(out_dir / src.name)
+
+            effective_noise = args.noise_level
+            if args.ask_noise and effective_noise > 0:
+                try:
+                    resp = input(f"  Apply forensic noise (level {effective_noise}) to {Path(file_path).name}? (y/N): ")
+                    if resp.strip().lower() not in ('y', 'yes'):
+                        effective_noise = 0
+                except (EOFError, KeyboardInterrupt):
+                    effective_noise = 0
+
+            success, message = MetaNuke.nuke_image(
+                file_path, noise_level=effective_noise, output_path=output_path,
+                backup=args.backup, strict=args.strict, rename=args.rename,
+            )
+
+            if use_tqdm:
+                status = "✓" if success else "✗"
+                progress.set_postfix_str(f"{status} {Path(file_path).name}")
+                progress.update(1)
+            elif not args.json:
+                status = "✓" if success else "✗"
+                print(f"{status}  {message}")
+
+            results.append((file_path, success, message))
 
     if use_tqdm:
         progress.close()

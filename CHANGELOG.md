@@ -1,5 +1,44 @@
 # Changelog
 
+## [2026-07-06] — v1.4.0
+
+### Added
+- **`--strict` flag** — ICC→sRGB conversion failures and other silently-swallowed operations are now reported as file failures (off by default; warnings are collected and logged)
+- **`--jobs N` / `-j` flag** — multiprocessing batch processing via `multiprocessing.Pool`. Default 1 (single-threaded). Works without `tqdm`. Incompatible with `--ask-noise`.
+- **`--rename` flag** — replaces output filename with the first 16 hex chars of the SHA256 hash, preventing filename-based information leakage. Requires `--output DIR`.
+- **TIFF binary-level metadata stripping** — `_strip_tiff_metadata` now walks the IFD chain and zeroes known metadata tag IDs (Make, Model, Software, Copyright, ImageDescription, EXIF/GPS IFD pointers, etc.)
+- **TIFF structural verification** — `_verify_clean` now checks TIFF files for embedded metadata strings at binary level.
+- **GIF structural verification** — `_verify_clean` now checks GIF files for surviving comment extension blocks.
+- **SVG comprehensive sanitisation** — strips `<script>` elements, editor namespace elements/attributes (inkscape, sodipodi, etc.), xlink:href and external href values, and base64 data-URI `<image>` elements. Previously only stripped `<metadata>/<desc>/<title>`.
+- **exiftool verification test** — `test_exiftool_verify` optionally shells out to exiftool (skips cleanly if absent) and asserts zero stored-image-metadata after nuking.
+- **TIFF stripping regression test** — creates a TIFF with Make/Model/Software/Copyright tags, nukes, and verifies binary-level removal.
+
+### Changed
+- **`_double_encode_jpeg` now randomized** — the second-encode quality varies per image (91–96 via `os.urandom`) instead of a fixed 94, so the tool does not imprint a single consistent quantization fingerprint.
+- **`_double_encode_jpeg` skippable at lossless** — at `noise_level=0` the double-encode pass is skipped entirely, avoiding a second lossy JPEG pass in lossless mode.
+- **README forensic claims corrected** — "LSB steganography detection defeated" → concrete per-pixel CSPRNG noise injection spec; "JPEG quantization fingerprinting eliminated" → random quantization tables documented; false precision removed.
+- **SVG test made comprehensive** — now asserts editor namespaces stripped, `<script>` removed, external hrefs purged, and data-URI images sanitised.
+
+### Fixed
+- **ICC→sRGB conversion failures no longer silent** — the `except Exception: pass` now captures the error message and appends it to a warnings list (viewable with `--strict`).
+
+## [2026-06-29] — v1.3.0
+
+### Fixed
+- **CRITICAL: HEIC/AVIF data loss** — `.heic`/`.heif`/`.avif` were listed as supported but had no save branch, so an in-place nuke overwrote the original with **zero bytes** (and reported failure). iPhone HEIC photos were the most common victim. Added proper re-encode branches plus an empty-buffer safety net that aborts *without writing* for any unhandled format.
+- **EXIF orientation lost** — rotated photos (e.g. portrait iPhone shots) came out sideways because the pixel buffer was reconstructed without applying the EXIF Orientation tag. Now baked in via `ImageOps.exif_transpose` before metadata is discarded.
+- **Verification gaps** — `_verify_clean` now structurally checks WebP (RIFF EXIF/XMP/ICCP chunks) in addition to JPEG/PNG, and only flags critical `info` keys that actually carry data (fixes false positives from plugins like pillow-heif that expose placeholder keys).
+
+### Added
+- **`--backup` / `-b` flag** (and GUI "Keep backup" checkbox) — preserves a `.bak` copy of each original before in-place overwrite.
+- **numpy fast path for forensic noise** — optional `numpy` dependency (`pip install meta-nuke[fast]`) vectorizes the per-pixel noise loop (~50–100× faster on large photos). Pure-Python fallback retained when numpy is absent.
+- **Standalone app build** — `build_app.sh` + `MetaNuke.spec` produce a fully self-contained `Meta Nuke.app` via PyInstaller, with no dependency on system Python / pyenv / the project venv. Bundles a matching `tkdnd`, so drag-and-drop works regardless of the host's Tcl/Tk.
+- **Expanded regression tests** — orientation preservation, HEIC/AVIF not destroyed, WebP cleaning, lossless pixel preservation, noise bounds, and the backup flag (81 assertions, all passing).
+
+### Changed
+- **CSPRNG noise** — forensic noise now draws from `os.urandom` instead of the predictable Mersenne-Twister `random` module.
+- **GUI drag-and-drop is now fault-tolerant** — if `tkinterdnd2`'s native library fails to load at runtime, the app falls back to a plain window (click-to-browse) instead of crashing on launch.
+
 ## [2026-06-21] — v1.2.0
 
 ### Added

@@ -124,8 +124,17 @@ class MetaNukeGUI:
     """Dark-themed GUI for MetaNuke with drag-and-drop and full options."""
 
     def __init__(self, preloaded_files=None):
+        # tkinterdnd2 may import cleanly yet fail at runtime when its native
+        # tkdnd library is incompatible with the active Tcl/Tk build
+        # (e.g. "interpreter uses an incompatible stubs mechanism"). Fall back
+        # to a plain Tk root so the app still launches without drag-and-drop.
+        self.dnd_enabled = False
         if DND_AVAILABLE:
-            self.root = TkinterDnD.Tk()
+            try:
+                self.root = TkinterDnD.Tk()
+                self.dnd_enabled = True
+            except Exception:
+                self.root = tk.Tk()
         else:
             self.root = tk.Tk()
 
@@ -155,6 +164,7 @@ class MetaNukeGUI:
         self.noise_enabled = tk.BooleanVar(value=True)
         self.lossless_mode = tk.BooleanVar(value=False)
         self.audit_logging = tk.BooleanVar(value=False)
+        self.backup_enabled = tk.BooleanVar(value=False)
         self.output_dir: Optional[str] = None
         self.output_suffix = tk.StringVar(value="")
         self.is_processing = False
@@ -277,7 +287,7 @@ class MetaNukeGUI:
         self.drop_zone.bind('<Button-1>', self._browse_files)
         self.drop_label.bind('<Button-1>', self._browse_files)
 
-        if DND_AVAILABLE:
+        if self.dnd_enabled:
             for widget in (self.drop_zone, self.drop_label):
                 widget.drop_target_register(DND_FILES)
                 widget.dnd_bind('<<DropEnter>>', self._on_drop_enter)
@@ -376,6 +386,12 @@ class MetaNukeGUI:
                                               activebackground=CARD_BG, activeforeground=TEXT,
                                               onvalue=True, offvalue=False)
         self.audit_checkbtn.pack(side='left', padx=(14, 0))
+        self.backup_checkbtn = tk.Checkbutton(arow, text="Keep backup", font=(FONT, 11),
+                                              variable=self.backup_enabled, bg=CARD_BG,
+                                              fg=TEXT_SEC, selectcolor='#3a3a3c',
+                                              activebackground=CARD_BG, activeforeground=TEXT,
+                                              onvalue=True, offvalue=False)
+        self.backup_checkbtn.pack(side='left', padx=(14, 0))
         tk.Label(arow, text="⌘O open  ·  ⌘N nuke  ·  ⌘P preview  ·  ⎋ clear",
                  font=(FONT, 8), bg=CARD_BG, fg=TEXT_MUTED).pack(side='right')
 
@@ -436,7 +452,7 @@ class MetaNukeGUI:
 
     def _register_nuke_drop(self):
         """Register DND on the nuke button for direct-drop-nuke."""
-        if not DND_AVAILABLE or not hasattr(self, 'nuke_button'):
+        if not getattr(self, 'dnd_enabled', False) or not hasattr(self, 'nuke_button'):
             return
         try:
             self.nuke_button.drop_target_register(DND_FILES)
@@ -723,6 +739,7 @@ class MetaNukeGUI:
             success, message = MetaNuke.nuke_image(
                 fp, noise_level=noise_lvl,
                 output_path=output_path,
+                backup=self.backup_enabled.get(),
             )
             results.append((fp, success, message))
 

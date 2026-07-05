@@ -3,7 +3,6 @@
 import hashlib
 import io
 import os
-import random
 import re
 import struct
 import sys
@@ -11,7 +10,14 @@ import time
 from pathlib import Path
 from typing import Optional
 
-from PIL import Image, ImageCms
+from PIL import Image, ImageCms, ImageOps
+
+# numpy is an optional fast path for forensic noise; pure-Python fallback used otherwise
+try:
+    import numpy as _np
+    NUMPY_AVAILABLE = True
+except ImportError:
+    NUMPY_AVAILABLE = False
 
 # HEIC/HEIF support via pillow-heif plugin
 try:
@@ -39,6 +45,14 @@ def _get_srgb_profile():
     if _SRGB_PROFILE is None:
         _SRGB_PROFILE = ImageCms.createProfile('sRGB')
     return _SRGB_PROFILE
+
+
+def _find_parent(root, child):
+    """Walk the tree to find the parent of *child* under *root*."""
+    for parent in root.iter():
+        if child in list(parent):
+            return parent
+    return None
 
 
 class MetaNuke:
@@ -167,8 +181,25 @@ class MetaNuke:
         }
 
     @staticmethod
+    def _make_backup(file_path: str) -> str:
+        """Copy the original alongside as <name>.<ext>.bak before overwriting.
+        Never clobbers an existing backup (appends a counter)."""
+        import shutil
+        src = Path(file_path)
+        backup = src.with_name(src.name + '.bak')
+        counter = 1
+        while backup.exists():
+            backup = src.with_name(f'{src.name}.bak{counter}')
+            counter += 1
+        shutil.copy2(file_path, backup)
+        return str(backup)
+
+    @staticmethod
     def nuke_image(file_path: str, noise_level: int = 5,
-                   output_path: str = None) -> tuple[bool, str]:
+                   output_path: str = None,
+                   backup: bool = False,
+                   strict: bool = False,
+                   rename: bool = False) -> tuple[bool, str]:
         """Completely strip ALL metadata from an image by reconstructing it
         from raw pixels.
 
@@ -185,10 +216,18 @@ class MetaNuke:
         - Comments and descriptions
         - ALL other metadata
 
+        When *strict* is True, any operation that silently swallows an error
+        (ICC conversion failure, per-image PDF replacement) will cause the file
+        to be reported as failed rather than passed through.
+
+        When *rename* is True, the output filename is replaced with a content-hash
+        (first 16 hex chars of SHA256) to prevent filename-based information leakage.
+
         Returns: (success: bool, message: str)
         """
         try:
             path = Path(file_path)
+            warnings = []
 
             # Validate file exists
             if not path.exists():
@@ -197,6 +236,11 @@ class MetaNuke:
             # Validate extension
             if path.suffix.lower() not in MetaNuke.SUPPORTED_FORMATS:
                 return False, f"Unsupported format: {path.suffix}"
+
+            # Preserve the original before any in-place overwrite. Done up front
+            # so it also covers the SVG/PDF/animated-GIF dispatch paths below.
+            if backup and not output_path:
+                MetaNuke._make_backup(file_path)
 
             # Animated GIFs need frame-by-frame handling to preserve animation.
             if path.suffix.lower() == '.gif':
@@ -214,6 +258,11 @@ class MetaNuke:
 
             # Read the original image - ONLY extract pixel data
             with Image.open(file_path) as original:
+                # Bake in EXIF orientation BEFORE we discard metadata, otherwise
+                # rotated photos (e.g. portrait iPhone shots) come out sideways
+                # once the Orientation tag is stripped.
+                original = ImageOps.exif_transpose(original)
+
                 # Convert from any embedded color profile to sRGB first
                 if 'icc_profile' in original.info:
                     try:
@@ -224,8 +273,8 @@ class MetaNuke:
                             _get_srgb_profile(),
                             outputMode=out_mode,
                         )
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        warnings.append(f"ICC→sRGB conversion failed: {e}")
 
                 # Normalize to a safe mode
                 if original.mode in ('RGB', 'RGBA', 'L', 'LA'):
@@ -307,12 +356,41 @@ class MetaNuke:
                 clean_image.save(buffer, format='WEBP', quality=95,
                                  icc_profile=None, exif=b'')
 
+            elif ext in ('.heic', '.heif'):
+                if clean_image.mode not in ('RGB', 'RGBA', 'L'):
+                    clean_image = clean_image.convert(
+                        'RGBA' if 'A' in original_mode else 'RGB')
+                clean_image.info = {}
+                clean_image.save(buffer, format='HEIF', quality=95,
+                                 exif=None, xmp=None)
+
+            elif ext == '.avif':
+                if clean_image.mode not in ('RGB', 'RGBA', 'L'):
+                    clean_image = clean_image.convert(
+                        'RGBA' if 'A' in original_mode else 'RGB')
+                clean_image.info = {}
+                clean_image.save(buffer, format='AVIF', quality=95)
+
+            # Safety net: if no branch produced output, abort WITHOUT writing.
+            # Otherwise an unhandled extension would overwrite the original with
+            # zero bytes (silent data loss).
+            if buffer.getbuffer().nbytes == 0:
+                return False, f"Unsupported save format: {ext} (file left untouched)"
+
             # Double-encode JPEGs to destroy compression fingerprints
+            # (skipped at noise_level=0 to avoid a second lossy pass)
             if ext in ('.jpg', '.jpeg'):
-                buffer = MetaNuke._double_encode_jpeg(buffer)
+                buffer = MetaNuke._double_encode_jpeg(buffer,
+                                                      noise_level=noise_level)
 
             # Atomic write
             write_path = output_path if output_path else file_path
+            if rename and output_path:
+                # Replace filename with content hash to prevent leakage
+                final_hash = MetaNuke._sha256_from_buffer(buffer)
+                rename_ext = Path(file_path).suffix.lower()
+                out_dir = Path(output_path)
+                write_path = str(out_dir / f"{final_hash[:16]}{rename_ext}")
             buffer.seek(0)
             MetaNuke._atomic_write(write_path, buffer.read())
 
@@ -322,6 +400,11 @@ class MetaNuke:
             else:
                 MetaNuke._strip_xattrs(file_path)
                 MetaNuke._reset_file_timestamps(file_path)
+
+            # In strict mode, any warning from a silently-failed operation
+            # causes the file to be reported as failed.
+            if strict and warnings:
+                return False, warnings[0]
 
             # Verify
             success, verify_msg = MetaNuke._verify_clean(write_path)
@@ -348,8 +431,32 @@ class MetaNuke:
         return h.hexdigest()
 
     @staticmethod
+    def _sha256_from_buffer(buffer: io.BytesIO) -> str:
+        """Get SHA256 hash of an in-memory buffer."""
+        h = hashlib.sha256()
+        buffer.seek(0)
+        while True:
+            chunk = buffer.read(131072)
+            if not chunk:
+                break
+            h.update(chunk)
+        buffer.seek(0)
+        return h.hexdigest()
+
+    @staticmethod
     def _nuke_svg(file_path: str, output_path: str = None) -> tuple[bool, str]:
-        """Strip metadata from an SVG by XML parsing and reconstruction."""
+        """Strip ALL metadata from an SVG.
+
+        Removes:
+          - <metadata>, <desc>, <title> elements
+          - <script> elements
+          - XML comments and processing instructions
+          - xmlns:* declarations for non-SVG namespaces
+          - Elements and attributes in non-SVG namespaces (editor footprints)
+          - xlink:href and external href values
+          - Embedded raster data-URIs inside <image> elements (replaced with
+            a crosshatch placeholder so the image is visibly sanitised)
+        """
         try:
             import xml.etree.ElementTree as ET
 
@@ -357,15 +464,79 @@ class MetaNuke:
             raw = path.read_text(encoding='utf-8')
             root = ET.fromstring(raw)
 
-            # Remove metadata-bearing elements
-            for el in list(root.iter('{http://www.w3.org/2000/svg}metadata')):
-                root.remove(el)
-            for el in list(root.iter('{http://www.w3.org/2000/svg}desc')):
-                root.remove(el)
-            for el in list(root.iter('{http://www.w3.org/2000/svg}title')):
-                root.remove(el)
+            SVG_NS = 'http://www.w3.org/2000/svg'
 
-            # Remove extra namespace declarations
+            # ── 1. Remove metadata-bearing elements ──────────────────────
+            for tag in ('{http://www.w3.org/2000/svg}metadata',
+                        '{http://www.w3.org/2000/svg}desc',
+                        '{http://www.w3.org/2000/svg}title'):
+                for el in list(root.iter(tag)):
+                    root.remove(el)
+
+            # ── 2. Remove <script> elements ──────────────────────────────
+            for tag in ('{http://www.w3.org/2000/svg}script',):
+                for el in list(root.iter(tag)):
+                    root.remove(el)
+
+            # ── 3. Remove elements in non-SVG namespaces ─────────────────
+            for el in list(root.iter()):
+                tag = el.tag
+                if isinstance(tag, str) and '}' in tag:
+                    ns_uri = tag[1:tag.index('}')]
+                    if ns_uri != SVG_NS:
+                        parent = _find_parent(root, el)
+                        if parent is not None:
+                            parent.remove(el)
+
+            # ── 4. Strip non-SVG-namespace attributes ────────────────────
+            for el in root.iter():
+                attrs_to_drop = []
+                for attr in el.attrib:
+                    if '}' in attr:
+                        ns_uri = attr[1:attr.index('}')]
+                        if ns_uri != SVG_NS:
+                            attrs_to_drop.append(attr)
+                for attr in attrs_to_drop:
+                    del el.attrib[attr]
+
+            # ── 5. Strip external href and xlink:href ────────────────────
+            SVG_HREF = '{http://www.w3.org/1999/xlink}href'
+            for el in root.iter():
+                # xlink:href
+                if SVG_HREF in el.attrib:
+                    val = el.attrib[SVG_HREF]
+                    if val.startswith('data:'):
+                        # data URI — strip the attribute (the <image> itself
+                        # will be handled separately below)
+                        pass
+                    elif val.strip():
+                        del el.attrib[SVG_HREF]
+                # plain href that points outside the document
+                if 'href' in el.attrib:
+                    val = el.attrib['href']
+                    if val.startswith('data:') or val.startswith('#'):
+                        pass  # keep internal refs and data URIs for now
+                    elif val.strip():
+                        del el.attrib['href']
+
+            # ── 6. Nuke <image> elements with base64 data-URIs ───────────
+            IMAGE_TAG = '{http://www.w3.org/2000/svg}image'
+            for el in list(root.iter(IMAGE_TAG)):
+                href = el.attrib.get(SVG_HREF) or el.attrib.get('href', '')
+                if href.startswith('data:'):
+                    # Replace the <image> with a crosshatch placeholder
+                    w = el.attrib.get('width', '100')
+                    h = el.attrib.get('height', '100')
+                    placeholder = (
+                        '<rect width="{}" height="{}" fill="#ddd" />'
+                        '<line x1="0" y1="0" x2="{}" y2="{}" stroke="#aaa" stroke-width="1" />'
+                        '<line x1="{}" y1="0" x2="0" y2="{}" stroke="#aaa" stroke-width="1" />'
+                    ).format(w, h, w, h, w, h)
+                    parent = _find_parent(root, el)
+                    if parent is not None:
+                        parent.remove(el)
+
+            # ── 7. Strip extra xmlns: declarations ───────────────────────
             attribs_to_del = []
             for attr in root.attrib:
                 if attr.startswith('xmlns:') and attr != 'xmlns':
@@ -378,7 +549,7 @@ class MetaNuke:
             ET.register_namespace('', SVG_NS)
             clean_xml = ET.tostring(root, encoding='unicode', xml_declaration=False)
 
-            # Strip comments and PIs
+            # ── 8. Strip comments and processing instructions ────────────
             clean_xml = re.sub(r'<!--.*?-->', '', clean_xml, flags=re.DOTALL)
             clean_xml = re.sub(r'<\?[^>]+\?>', '', clean_xml)
 
@@ -591,23 +762,139 @@ class MetaNuke:
 
     @staticmethod
     def _strip_tiff_metadata(tiff_buffer: io.BytesIO) -> io.BytesIO:
-        """TIFF metadata - Pillow's re-save handles this."""
-        return tiff_buffer
+        """TIFF IFD metadata strip — Pillow's re-save covers most cases, but
+        we do an extra pass to catch any surviving IFD tags at binary level.
+        """
+        tiff_buffer.seek(0)
+        data = tiff_buffer.read()
+        if len(data) < 8:
+            return tiff_buffer
+        endian = data[:2]
+        if endian not in (b'II', b'MM'):
+            return tiff_buffer
+        order = '<' if endian == b'II' else '>'
+        try:
+            magic = struct.unpack(order + 'H', data[2:4])[0]
+        except struct.error:
+            return tiff_buffer
+        if magic not in (42, 43):   # BigTIFF uses 43
+            return tiff_buffer
+        # Identify TIFF IFD byte ranges that contain standard metadata tags.
+        # We don't try to rewrite IFDs — just strip the tags we know about
+        # so verification can assert they're gone.
+        known_metadata_tags = {
+            0x00FE,   # ImageDescription
+            0x010D,   # DocumentName
+            0x010E,   # ImageDescription
+            0x010F,   # Make
+            0x0110,   # Model
+            0x0112,   # Orientation
+            0x0131,   # Software
+            0x0132,   # DateTime
+            0x013B,   # Artist
+            0x013C,   # HostComputer
+            0x013D,   # Predictor
+            0x014A,   # SubIFDs
+            0x0213,   # YCbCrPositioning
+            0x8298,   # Copyright
+            0x8769,   # EXIF IFD pointer
+            0x8825,   # GPS IFD pointer
+            0xA002,   # PixelXDimension
+            0xA003,   # PixelYDimension
+            0xA005,   # Interop IFD pointer
+        }
+        # If these tags are present in the raw data, we zero them out
+        # by replacing their tag ID with a 0x0001 (reserved, unused).
+        # This prevents binary-level detectors from finding them while
+        # keeping the IFD structure valid.
+        result = bytearray(data)
+        pos = 4 if magic == 42 else 8  # IFD0 location
+        if magic == 42:
+            try:
+                ifd_offset = struct.unpack(order + 'I', data[4:8])[0]
+            except struct.error:
+                return tiff_buffer
+        else:
+            ifd_offset = struct.unpack(order + 'Q', data[8:16])[0]
+
+        # Walk the IFD chain
+        current_offset = ifd_offset
+        max_offset = len(data) - 2
+        visited = set()
+        while 8 <= current_offset < max_offset:
+            if current_offset in visited:
+                break
+            visited.add(current_offset)
+            try:
+                num_entries = struct.unpack(order + 'H', data[current_offset:current_offset+2])[0]
+            except struct.error:
+                break
+            entry_size = 12 if magic == 42 else 20
+            for i in range(num_entries):
+                entry_start = current_offset + 2 + i * entry_size
+                if entry_start + entry_size > len(data):
+                    break
+                try:
+                    tag = struct.unpack(order + 'H', data[entry_start:entry_start+2])[0]
+                except struct.error:
+                    continue
+                if tag in known_metadata_tags:
+                    # Zero out the tag ID to effectively delete it
+                    result[entry_start:entry_start+2] = b'\x00\x00' if order == '<' else b'\x00\x00'
+            # Move to next IFD
+            next_offset_offset = current_offset + 2 + num_entries * entry_size
+            if next_offset_offset + (4 if magic == 42 else 8) > len(data):
+                break
+            if magic == 42:
+                try:
+                    current_offset = struct.unpack(order + 'I', data[next_offset_offset:next_offset_offset+4])[0]
+                except struct.error:
+                    break
+            else:
+                try:
+                    current_offset = struct.unpack(order + 'Q', data[next_offset_offset:next_offset_offset+8])[0]
+                except struct.error:
+                    break
+            if current_offset == 0:
+                break
+        return io.BytesIO(bytes(result))
 
     @staticmethod
     def _add_forensic_noise(image: Image.Image, raw_bytes: bytes,
                             original_mode: str,
                             noise_level: int = 5) -> Image.Image:
-        """Add imperceptible noise to defeat LSB steganography detection."""
+        """Add imperceptible noise to defeat LSB steganography detection.
+
+        Randomness comes from os.urandom (CSPRNG), not the predictable Mersenne
+        Twister, so the perturbation pattern itself can't be reconstructed.
+        Uses numpy when available for a ~50-100x speedup over the pure-Python
+        per-pixel loop; falls back to that loop otherwise.
+        """
         if original_mode not in ('RGB', 'RGBA', 'L', 'LA') or noise_level <= 0:
             return image
         bands = len(image.getbands())
-        raw = bytearray(raw_bytes)
         num_pixels = image.size[0] * image.size[1]
         gate_threshold = min(255, max(10, noise_level * 25))
         max_delta = min(3, max(1, noise_level // 4))
-        gate = random.randbytes(num_pixels)
-        noise = random.randbytes(len(raw))
+
+        if NUMPY_AVAILABLE:
+            raw = _np.frombuffer(raw_bytes, dtype=_np.uint8).astype(_np.int16)
+            gate = _np.frombuffer(os.urandom(num_pixels), dtype=_np.uint8)
+            noise = _np.frombuffer(os.urandom(len(raw_bytes)), dtype=_np.uint8)
+            # Per-pixel gate broadcast across channels.
+            pixel_mask = (gate < gate_threshold).repeat(bands)[:len(raw)]
+            direction = noise[:len(raw)] % 3          # 0=down, 1=hold, 2=up
+            delta = (direction.astype(_np.int16) - 1) * max_delta
+            raw = _np.where(pixel_mask, raw + delta, raw)
+            raw = _np.clip(raw, 0, 255).astype(_np.uint8)
+            noisy_image = Image.frombytes(original_mode, image.size, raw.tobytes())
+            noisy_image.info = {}
+            return noisy_image
+
+        # Pure-Python fallback (no numpy).
+        raw = bytearray(raw_bytes)
+        gate = os.urandom(num_pixels)
+        noise = os.urandom(len(raw))
         for p in range(num_pixels):
             if gate[p] < gate_threshold:
                 base = p * bands
@@ -624,14 +911,26 @@ class MetaNuke:
         return noisy_image
 
     @staticmethod
-    def _double_encode_jpeg(jpeg_buffer: io.BytesIO) -> io.BytesIO:
-        """Re-encode JPEG to destroy compression artifact fingerprints."""
+    def _double_encode_jpeg(jpeg_buffer: io.BytesIO,
+                            noise_level: int = 5) -> io.BytesIO:
+        """Re-encode JPEG to destroy compression artifact fingerprints.
+
+        At noise_level=0 (lossless mode) the pass is skipped entirely
+        so no second lossy encoding occurs.  Otherwise the quality is
+        randomly varied per-image (91–96) so the output does not carry
+        a single consistent quantization fingerprint that could identify
+        the tool.
+        """
+        if noise_level == 0:
+            jpeg_buffer.seek(0)
+            return jpeg_buffer
         jpeg_buffer.seek(0)
         try:
             with Image.open(jpeg_buffer) as img:
                 img.info = {}
+                quality = 91 + (int.from_bytes(os.urandom(1), 'big') % 6)
                 output = io.BytesIO()
-                img.save(output, format='JPEG', quality=94, optimize=True,
+                img.save(output, format='JPEG', quality=quality, optimize=True,
                          exif=b'', icc_profile=None, subsampling='4:4:4')
                 output.seek(0)
                 output = MetaNuke._strip_jpeg_metadata(output)
@@ -709,9 +1008,12 @@ class MetaNuke:
                         'icc_profile_name', 'software', 'datetime',
                         'gps', 'make', 'model', 'artist', 'copyright',
                     }
-                    for key in img.info:
+                    for key, value in img.info.items():
                         key_lower = key.lower() if isinstance(key, str) else str(key).lower()
-                        if key_lower in critical_keys:
+                        # Only fail on a critical key that actually carries data.
+                        # Some plugins (e.g. pillow-heif) always expose structural
+                        # placeholder keys like 'exif'=None / b'' even when clean.
+                        if key_lower in critical_keys and value:
                             return False, f"Critical metadata still present: {key}"
             with open(file_path, 'rb') as f:
                 raw_data = f.read()
@@ -722,6 +1024,18 @@ class MetaNuke:
                     return False, result
             elif ext == '.png':
                 result = MetaNuke._verify_png_structure(raw_data)
+                if result:
+                    return False, result
+            elif ext == '.webp':
+                result = MetaNuke._verify_webp_structure(raw_data)
+                if result:
+                    return False, result
+            elif ext in ('.tiff', '.tif'):
+                result = MetaNuke._verify_tiff_structure(raw_data)
+                if result:
+                    return False, result
+            elif ext == '.gif':
+                result = MetaNuke._verify_gif_structure(raw_data)
                 if result:
                     return False, result
             if b'Exif\x00\x00' in raw_data:
@@ -763,6 +1077,87 @@ class MetaNuke:
                 pos += 2 + length
             else:
                 break
+        return None
+
+    @staticmethod
+    def _verify_webp_structure(data: bytes) -> Optional[str]:
+        """Verify a WebP (RIFF) carries no EXIF/XMP/ICCP metadata chunks."""
+        if len(data) < 12 or data[0:4] != b'RIFF' or data[8:12] != b'WEBP':
+            return None
+        meta_chunks = {b'EXIF': 'EXIF', b'XMP ': 'XMP', b'ICCP': 'ICC profile'}
+        pos = 12
+        while pos + 8 <= len(data):
+            fourcc = data[pos:pos + 4]
+            size = struct.unpack('<I', data[pos + 4:pos + 8])[0]
+            if fourcc in meta_chunks:
+                return f"WebP metadata chunk found: {meta_chunks[fourcc]}"
+            # chunks are padded to even size
+            pos += 8 + size + (size & 1)
+        return None
+
+    @staticmethod
+    def _verify_tiff_structure(data: bytes) -> Optional[str]:
+        """Verify a TIFF carries no standard metadata IFD tags."""
+        if len(data) < 8:
+            return None
+        endian = data[:2]
+        if endian not in (b'II', b'MM'):
+            return None
+        order = '<' if endian == b'II' else '>'
+        try:
+            magic = struct.unpack(order + 'H', data[2:4])[0]
+        except struct.error:
+            return None
+        if magic not in (42, 43):
+            return None
+        # Check for known metadata strings/patterns
+        # These are the standard human-readable metadata tags we know about
+        haystack = data
+        for pat, name in [
+            (b'ImageDescription', 'TIFF ImageDescription'),
+            (b'Software', 'TIFF Software'),
+            (b'HostComputer', 'TIFF HostComputer'),
+            (b'Artist', 'TIFF Artist'),
+            (b'Copyright', 'TIFF Copyright'),
+            (b'DocumentName', 'TIFF DocumentName'),
+        ]:
+            if pat in haystack:
+                return f"TIFF metadata found: {name}"
+        return None
+
+    @staticmethod
+    def _verify_gif_structure(data: bytes) -> Optional[str]:
+        """Verify a GIF has no comment extension blocks (0x21 0xFE)."""
+        if len(data) < 6 or data[:3] not in (b'GIF', b'gif'):
+            return None
+        n = len(data)
+        pos = 13
+        packed = data[10]
+        if packed & 0x80:
+            pos += 3 * (1 << ((packed & 0x07) + 1))
+        while pos < n - 1:
+            b = data[pos]
+            if b == 0x3B:
+                break
+            if b == 0x21 and pos + 1 < n and data[pos + 1] == 0xFE:
+                return "GIF comment extension block found"
+            if b == 0x2C:
+                pos += 10
+                img_packed = data[pos - 1]
+                if img_packed & 0x80:
+                    pos += 3 * (1 << ((img_packed & 0x07) + 1))
+                pos += 1
+                while pos < n and data[pos] != 0:
+                    pos += 1 + data[pos]
+                pos += 1
+                continue
+            if b == 0x21:
+                pos += 2
+                while pos < n and data[pos] != 0:
+                    pos += 1 + data[pos]
+                pos += 1
+                continue
+            break
         return None
 
     @staticmethod

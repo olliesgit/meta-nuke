@@ -56,11 +56,12 @@ Or with a file:
 - SVG `<metadata>`, `<desc>`, `<title>`, XML comments, processing instructions
 - PDF document metadata (author, creator, producer) and XMP
 
-**Forensic Countermeasures:**
-- LSB steganography detection defeated
-- JPEG quantization fingerprinting eliminated
-- Filesystem timestamp analysis defeated
-- Statistical analysis patterns removed (configurable noise level 0-10)
+|**Forensic Countermeasures:**
+|- Per-pixel CSPRNG noise injection (±1–3, gated ~25% of pixels at default level 5)
+|- JPEG double-encode with random quantization tables (quality 91–96) to mask tool fingerprint
+|- Filesystem timestamp analysis defeated (zeroed to wall-clock time)
+|- xattr stripping (macOS quarantine, Spotlight comments, Finder labels)
+|- Configurable noise level 0–10 (0 = lossless, no perturbation)
 
 ---
 
@@ -77,8 +78,13 @@ python meta_nuke.py [options] [FILE ...]
 | `--dir DIR` / `-d` | Process all images in a directory |
 | `--recursive` / `-r` | Recurse into subdirectories (with --dir) |
 | `--output DIR` / `-o` | Save to output directory (default: overwrite) |
+| `--backup` / `-b` | Keep a `.bak` copy of each original (in-place mode) |
 | `--noise-level N` / `-n` | Forensic noise 0-10 (0=lossless, 5=default, 10=max) |
+| `--strict` | Fail on silently-swallowed operations (ICC, PDF image) |
+| `--jobs N` / `-j` | Parallel workers (default 1; single-threaded) |
+| `--rename` | Write SHA256 content-hash filenames (requires --output) |
 | `--preview` / `-p` | Show metadata without nuking |
+| `--ask-noise` | Prompt before applying forensic noise to each file |
 | `--log FILE` / `-l` | Append audit log to FILE |
 | `--json` | Machine-readable JSON output |
 | `--no-banner` | Suppress ASCII logo |
@@ -135,6 +141,21 @@ This creates a virtual environment and installs:
 - PyMuPDF (PDF support)
 - tqdm (progress bars)
 - tkinterdnd2 (drag-and-drop, optional)
+- numpy (optional — ~50–100× faster forensic noise on large images)
+
+### Build a standalone app
+
+The bundled `Meta Nuke.app` is a lightweight launcher that runs from the project
+venv. To build a **fully self-contained** app (no Python, pyenv, or venv required
+on the target machine — copy it anywhere or hand it to anyone):
+
+```bash
+./build_app.sh
+cp -R "dist/Meta Nuke.app" /Applications/
+```
+
+This uses PyInstaller and bundles a matching `tkdnd`, so drag-and-drop works
+regardless of the host's Tcl/Tk.
 
 ---
 
@@ -153,7 +174,7 @@ After nuking, verify with:
 
 ```bash
 exiftool image.jpg       # Should show minimal/no metadata
-python tests/test_smoke.py  # 61 smoke tests
+python tests/test_smoke.py  # 98 smoke tests (no external deps)
 ```
 
 ---
