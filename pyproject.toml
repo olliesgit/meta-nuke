@@ -26,11 +26,11 @@ dependencies = [
 heif = ["pillow-heif>=0.10.0"]
 pdf = ["PyMuPDF>=1.23.0"]
 progress = ["tqdm>=4.60.0"]
-# Pinned <0.5: tkinterdnd2 0.5.0 ships only a Tcl 9 tkdnd build for
-# osx-arm64, which fails to load against the Tcl/Tk 8.6 that ships with
-# CPython on Apple Silicon ("Unable to load tkdnd library"). 0.4.x ships a
-# matching arm64 + Tcl 8.6 binary, so drag-and-drop actually works.
-gui = ["tkinterdnd2>=0.4.2,<0.5"]
+# Pinned <0.4.4: tkinterdnd2 0.4.4+ ships osx-arm64/libtcl9tkdnd*.dylib compiled
+# for Tcl 9 only, which fails to load against CPython's Tcl/Tk 8.6 on Apple
+# Silicon ("interpreter uses an incompatible stubs mechanism"). 0.4.3 and
+# earlier ship a matching arm64 + Tcl 8.6 binary so drag-and-drop actually works.
+gui = ["tkinterdnd2>=0.4.2,<0.4.4"]
 fast = ["numpy>=1.21.0"]
 all = [
     "pillow-heif>=0.10.0",

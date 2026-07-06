@@ -511,20 +511,57 @@ class MetaNukeGUI:
             self.noise_level.set(5)
 
     def _parse_drop_data(self, raw_data):
-        """Parse drag-and-drop data into a list of file paths."""
+        """Parse drag-and-drop data into a list of file paths.
+
+        Handles multiple formats:
+          - Space-separated with {braces} for paths containing spaces (tkdnd default)
+          - file:// URL format (macOS pasteboard)
+          - Newline-separated paths
+          - Mixed
+        """
         paths = []
-        if '{' in raw_data:
-            matches = re.findall(r'\{([^}]+)\}|(\S+)', raw_data)
+        # Decode file:// URLs to local paths
+        text = raw_data
+        if 'file://' in text:
+            import urllib.parse
+            for part in text.replace('\r\n', '\n').replace('\r', '\n').split('\n'):
+                part = part.strip()
+                if part.startswith('file://'):
+                    try:
+                        p = urllib.parse.urlparse(part)
+                        local = urllib.parse.unquote(p.path)
+                        if os.path.exists(local):
+                            paths.append(local)
+                    except Exception:
+                        pass
+                elif part and os.path.exists(part):
+                    paths.append(part)
+            if paths:
+                return paths
+
+        # tkdnd format: space-separated, {braces} around paths with spaces
+        if '{' in text:
+            matches = re.findall(r'\{([^}]+)\}|(\S+)', text)
             for match in matches:
                 p = match[0] if match[0] else match[1]
+                p = p.strip()
                 if p and os.path.exists(p):
                     paths.append(p)
         else:
-            for p in raw_data.split():
-                if os.path.exists(p):
-                    paths.append(p)
-            if not paths and os.path.exists(raw_data):
-                paths.append(raw_data)
+            # Fallback: try splitting by whitespace, then by newline
+            for sep in ('\n', '\r\n', '\r'):
+                if sep in text:
+                    for p in text.split(sep):
+                        p = p.strip()
+                        if p and os.path.exists(p):
+                            paths.append(p)
+                    break
+            else:
+                for p in text.split():
+                    if os.path.exists(p):
+                        paths.append(p)
+            if not paths and os.path.exists(text.strip()):
+                paths.append(text.strip())
         return paths
 
     def _browse_files(self, event=None):

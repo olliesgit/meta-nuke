@@ -26,6 +26,8 @@
 - **ICC→sRGB conversion failures no longer silent** — the `except Exception: pass` now captures the error message and appends it to a warnings list (viewable with `--strict`).
 - **PDF widget annotations not stripped** — `page.annots()` doesn't return widget/form-field annotations. Now nulls the page's `/Annots` array directly to catch them.
 - **PDF RGBA pixmap alpha silently dropped** — embedded images with alpha channels were converted to RGB via `Pixmap(csRGB, pix)` which dropped the alpha channel; now pixels are blended onto white before conversion.
+- **macOS Dock icon / foreground activation** — `_setup_macos_dock_icon()` failed silently because AppKit framework was never loaded (NSApp = None). Added `ctypes.cdll.LoadLibrary('AppKit')` before any objc calls; added `activateIgnoringOtherApps: True` so the window appears in the foreground.
+- **Drag-and-drop broken on Apple Silicon** — `tkinterdnd2` 0.4.4+ ships an arm64 tkdnd binary compiled for Tcl 9 only, incompatible with CPython's Tcl/Tk 8.6. Pinned to `tkinterdnd2>=0.4.2,<0.4.4` which includes a native arm64 + Tcl 8.6 binary. Multi-file drop parsing also improved to handle macOS `file://` URL format and newline-separated paths.
 
 ## [2026-06-29] — v1.3.0
 
