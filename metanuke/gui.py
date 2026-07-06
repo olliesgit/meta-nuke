@@ -21,17 +21,26 @@ def _setup_macos_dock_icon():
         return
     try:
         import ctypes
+        import ctypes.util
+        # AppKit must be loaded before objc_getClass('NSApplication') works
+        ctypes.cdll.LoadLibrary(ctypes.util.find_library('AppKit'))
         objc = ctypes.cdll.LoadLibrary(ctypes.util.find_library('objc'))
         objc.objc_getClass.restype = ctypes.c_void_p
         objc.sel_registerName.restype = ctypes.c_void_p
         objc.objc_msgSend.restype = ctypes.c_void_p
         objc.objc_msgSend.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
-        NSApp = objc.objc_msgSend(
-            objc.objc_getClass(b'NSApplication'),
-            objc.sel_registerName(b'sharedApplication'),
-        )
+        NSApplication = objc.objc_getClass(b'NSApplication')
+        shared_sel = objc.sel_registerName(b'sharedApplication')
+        NSApp = objc.objc_msgSend(NSApplication, shared_sel)
+        if not NSApp:
+            return
+        # setActivationPolicy: 0=regular (Dock icon), 1=accessory, 2=prohibited
         objc.objc_msgSend.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_int64]
         objc.objc_msgSend(NSApp, objc.sel_registerName(b'setActivationPolicy:'), 0)
+        # bring app to foreground so the window actually appears
+        objc.objc_msgSend.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_bool]
+        objc.objc_msgSend(NSApp, objc.sel_registerName(b'activateIgnoringOtherApps:'), True)
+
         icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                                  'Meta Nuke.app', 'Contents', 'Resources', 'MetaNuke.icns')
         if os.path.exists(icon_path):
