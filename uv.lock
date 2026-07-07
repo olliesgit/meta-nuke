@@ -70,7 +70,7 @@ requires-dist = [
     { name = "pymupdf", marker = "extra == 'all'", specifier = ">=1.23.0" },
     { name = "pymupdf", marker = "extra == 'pdf'", specifier = ">=1.23.0" },
     { name = "tkinterdnd2", marker = "extra == 'all'", specifier = ">=0.4.2,<0.5" },
-    { name = "tkinterdnd2", marker = "extra == 'gui'", specifier = ">=0.4.2,<0.5" },
+    { name = "tkinterdnd2", marker = "extra == 'gui'", specifier = ">=0.4.2,<0.4.4" },
     { name = "tqdm", marker = "extra == 'all'", specifier = ">=4.60.0" },
     { name = "tqdm", marker = "extra == 'progress'", specifier = ">=4.60.0" },
 ]
@@ -559,7 +559,7 @@ resolution-markers = [
     "python_full_version < '3.10'",
 ]
 dependencies = [
-    { name = "pillow", version = "11.3.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.10'" },
+    { name = "pillow", version = "11.3.0", source = { registry = "https://pypi.org/simple" } },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/64/65/77284daf2a8a2849b9040889bd8e1b845e693ed97973a28ba2122b8922ad/pillow_heif-1.1.1.tar.gz", hash = "sha256:f60e8c8a8928556104cec4fff39d43caa1da105625bdb53b11ce3c89d09b6bde", size = 18271952, upload-time = "2025-09-30T16:42:24.485Z" }
 wheels = [
@@ -627,7 +627,7 @@ resolution-markers = [
     "python_full_version == '3.10.*'",
 ]
 dependencies = [
-    { name = "pillow", version = "12.2.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.10'" },
+    { name = "pillow", version = "12.2.0", source = { registry = "https://pypi.org/simple" } },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/e3/5f/4753689400e657ca5d984f5e897657dab12d91b62f1bb6a1e73487b59a97/pillow_heif-1.4.0.tar.gz", hash = "sha256:55a7c0cb5321538d1ca74037be54b48d147017735a766eb29bcca4761253a1f1", size = 17127538, upload-time = "2026-06-10T16:02:40.009Z" }
 wheels = [
@@ -721,11 +721,11 @@ wheels = [
 
 [[package]]
 name = "tkinterdnd2"
-version = "0.4.4.1"
+version = "0.4.3"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/3d/02/9027f0a22f2132adecc78747f210f83aa967535e98234a8c1e5656069c41/tkinterdnd2-0.4.4.1.tar.gz", hash = "sha256:e8ca37be9ac4fc37d8d53850f88086a9dcb761ea63d667eaa473ed1c87c7b968", size = 425895, upload-time = "2026-05-31T22:54:23.39Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/6e/2a/9d50ee58c7a60bf0c8d4bd8030b4afc29c8bf60158f95dbc89e8081d29d2/tkinterdnd2-0.4.3.tar.gz", hash = "sha256:03a932a11b42ab139c4552b414aa10ee8a087b8386b52baca8c62939760c2ef2", size = 444595, upload-time = "2025-02-28T12:55:50.861Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/30/02/c351fe199a5ec42bbcb68327e46711699d7271ac622a93277c8caadf3800/tkinterdnd2-0.4.4.1-py3-none-any.whl", hash = "sha256:d1af61a544a2ec6bdec26baa04c0853c97be044fd89816c0879367887419f713", size = 474764, upload-time = "2026-05-31T22:54:21.625Z" },
+    { url = "https://files.pythonhosted.org/packages/08/c3/e04f004a53c00dc01126b6f998264cef672c6883c36aa4bd65845a8eb4c0/tkinterdnd2-0.4.3-py3-none-any.whl", hash = "sha256:8804f5d2e2a99713ec93e85384397fec6bf66fdf2065e3750938d55018971c4a", size = 493006, upload-time = "2025-02-28T12:55:47.501Z" },
 ]
 
 [[package]]

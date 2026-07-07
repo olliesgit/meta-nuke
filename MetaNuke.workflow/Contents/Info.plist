@@ -2,83 +2,53 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-	<key>ACTIONS</key>
+	<key>Actions</key>
 	<array>
 		<dict>
-			<key>Action</key>
+			<key>ActionBundlIdentifier</key>
+			<string>com.apple.automator.runShellScript</string>
+			<key>ActionBundleURL</key>
+			<string>file:///System/Library/Automator/RunShellScript.action</string>
+			<key>ActionName</key>
+			<string>Run Shell Script</string>
+			<key>ActionProperties</key>
 			<dict>
-				<key>ActionName</key>
-				<string>Run Shell Script</string>
-				<key>ActionUUID</key>
-				<string>3F0A1F2B-5D1E-4B3C-8A6D-7E2F1C4B5A3D</string>
-				<key>ActionVersion</key>
-				<integer>2</integer>
-				<key>BundleIdentifier</key>
-				<string>com.apple.automator.RunShellScript</string>
-				<key>MetaData</key>
-				<dict>
-					<key>CanUseNotification</key>
-					<true/>
-					<key>CanUseTextToSpeak</key>
-					<false/>
-					<key>ShowActionInSteps</key>
-					<true/>
-					<key>ShowWhenRun</key>
-					<false/>
-				</dict>
-				<key>Parameters</key>
-				<dict>
-					<key>COMMAND_STRING</key>
-					<string>cd /Users/olliesblog/02-tools/meta-nuke
-for f in "$@"; do
-  /Users/olliesblog/.pyenv/shims/python3 -m metanuke.cli --no-banner "$f"
-done
-osascript -e 'display notification "Metadata nuked from '$#' files" with title "Meta Nuke"'
-</string>
-					<key>inputMethod</key>
-					<integer>1</integer>
-					<key>shell</key>
-					<integer>0</integer>
-					<key>sourceFile</key>
-					<string></string>
-				</dict>
-				<key>Position</key>
+				<key>COMMAND_STRING</key>
+				<string>
+cd ~/vault/04-tools/meta-nuke
+python3 -m metanuke.cli --no-banner "$f"</string>
+				<key>inputMethod</key>
+				<integer>1</integer>
+				<key>shell</key>
 				<integer>0</integer>
-				<key>UUID</key>
-				<string>3F0A1F2B-5D1E-4B3C-8A6D-7E2F1C4B5A3D</string>
+				<key>source</key>
+				<string>
+cd ~/vault/04-tools/meta-nuke
+python3 -m metanuke.cli --no-banner "$f"</string>
 			</dict>
+			<key>ActionVersion</key>
+			<string>2.0.4</string>
+			<key>MacroActionBundleIdentifier</key>
+			<string>com.apple.automator.runShellScript</string>
+			<key>MacroActionMetaData</key>
+			<dict>
+				<key>warningShownForResourceInitialization</key>
+				<true/>
+			</dict>
+			<key>MacroActionType</key>
+			<string>Runner</string>
+			<key>MacroActionUUID</key>
+			<string>3A8D0A91-70A7-44FA-80C9-8D282FD9B3B7</string>
 		</dict>
 	</array>
 	<key>ApplicationConstraints</key>
-	<dict>
-		<key>ExtendedFinderExtension</key>
-		<true/>
-	</dict>
-	<key>CFBundleDevelopmentRegion</key>
-	<string>en</string>
-	<key>CFBundleIdentifier</key>
-	<string>com.underdogdigital.metanuke.quickaction</string>
-	<key>CFBundleInfoDictionaryVersion</key>
-	<string>6.0</string>
-	<key>CFBundleName</key>
-	<string>Nuke with MetaNuke</string>
-	<key>CFBundlePackageType</key>
-	<string>BNDL</string>
-	<key>CFBundleShortVersionString</key>
-	<string>1.0</string>
-	<key>CFBundleSignature</key>
-	<string>????</string>
-	<key>CFBundleVersion</key>
-	<string>1</string>
-	<key>NSHumanReadableCopyright</key>
-	<string>© Underdog Digital</string>
-	<key>NSPrincipalClass</key>
-	<string>NSApplication</string>
-	<key>WFWorkflowIdentifier</key>
-	<string>com.underdogdigital.metanuke.quickaction</string>
-	<key>WFWorkflowName</key>
-	<string>Nuke with MetaNuke</string>
-	<key>WFWorkflowType</key>
-	<string>AMWorkflow</string>
+	<array>
+		<string>com.apple.finder</string>
+	</array>
+	<key>UTI</key>
+	<array>
+		<string>public.image</string>
+		<string>public.folder</string>
+	</array>
 </dict>
 </plist>
