@@ -1,5 +1,14 @@
 # ☢️ META NUKE ☢️
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Python 3.9+](https://img.shields.io/badge/python-3.9%2B-blue.svg)](https://www.python.org/downloads/)
+[![Version](https://img.shields.io/badge/version-1.4.0-brightgreen.svg)](https://github.com/olliesgit/meta-nuke)
+[![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-lightgrey.svg)](https://github.com/olliesgit/meta-nuke)
+[![Offline](https://img.shields.io/badge/network-100%25%20offline-success.svg)](https://github.com/olliesgit/meta-nuke)
+[![GitHub issues](https://img.shields.io/github/issues/olliesgit/meta-nuke)](https://github.com/olliesgit/meta-nuke/issues)
+[![GitHub stars](https://img.shields.io/github/stars/olliesgit/meta-nuke)](https://github.com/olliesgit/meta-nuke/stargazers)
+[![GitHub last commit](https://img.shields.io/github/last-commit/olliesgit/meta-nuke)](https://github.com/olliesgit/meta-nuke/commits/main)
+
 **FORENSICALLY SAFE • NUCLEAR METADATA DESTRUCTION**
 
 A bulletproof, 100% offline tool to completely strip ALL metadata from images, SVGs, and PDFs. Designed for life-or-death scenarios where forensic analysis must find nothing.
