@@ -1,0 +1,45 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+jobs:
+  build-macos-app:
+    name: Build standalone macOS app
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install build dependencies
+        run: |
+          pip install --quiet pyinstaller
+          pip install --quiet pillow pillow-heif PyMuPDF "tkinterdnd2>=0.4.2,<0.5" numpy
+
+      - name: Build Meta Nuke.app
+        run: python -m PyInstaller --noconfirm MetaNuke.spec
+
+      - name: Smoke-test the bundled binary
+        run: |
+          "dist/Meta Nuke.app/Contents/MacOS/MetaNuke" --version
+
+      - name: Package app as zip
+        run: ditto -c -k --sequesterRsrc --keepParent "dist/Meta Nuke.app" "Meta-Nuke-macOS.zip"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Meta-Nuke-macOS
+          path: Meta-Nuke-macOS.zip
+          retention-days: 14
+
+      - name: Attach to GitHub release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: Meta-Nuke-macOS.zip
+          generate_release_notes: true

@@ -1,5 +1,34 @@
 # Changelog
 
+## [2026-08-13] — v1.5.0
+
+### Added
+- **GitHub Actions CI** — full test suite runs on every push/PR across
+  Ubuntu + macOS and Python 3.9–3.12, including live `exiftool` verification
+  (installed per-runner). Ships a Release workflow that builds the standalone
+  `Meta Nuke.app` on a macOS runner and attaches it to every `v*` tag.
+- **TIFF value-bytes scrubbing** — the binary TIFF pass now zeroes the IFD
+  entry **values** (inline or at their offsets), not just the tag IDs. Zeroing
+  only the ID left ASCII payloads like `Adobe Photoshop 24.0`, artist and
+  author names recoverable from the raw file — a genuine forensic leak.
+- **TIFF structural verification** — `_verify_tiff_structure` now walks the
+  IFD chain and fails on any surviving known metadata tag ID (Make, Model,
+  Software, DateTime, EXIF/GPS pointers…), not just ASCII string scans.
+- **Animated GIF `--output` / `--rename`** — animated GIFs previously ignored
+  the output directory and wrote in place; they now honour `--output DIR` and
+  `--rename` like every other format.
+- **Duplicate-file dedupe** — `collect_files` deduplicates so the same file
+  passed via `FILE` + `--dir` (or overlapping dirs) is processed once.
+
+### Changed
+- **Randomised file timestamps** — stamps are now jittered within the last
+  0–300s (CSPRNG). Stamping every file with the identical current second was
+  itself a batch-processor fingerprint.
+
+### Fixed
+- App icon now tracked in the repo (`assets/MetaNuke.icns`) so CI builds work;
+  `MetaNuke.spec` version bumped 1.2.0 → 1.5.0 and icon path updated.
+
 ## [2026-07-06] — v1.4.0
 
 ### Added

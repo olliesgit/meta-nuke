@@ -54,7 +54,7 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon='Meta Nuke.app/Contents/Resources/MetaNuke.icns',
+    icon='assets/MetaNuke.icns',
 )
 
 coll = COLLECT(
@@ -69,12 +69,12 @@ coll = COLLECT(
 app = BUNDLE(
     coll,
     name='Meta Nuke.app',
-    icon='Meta Nuke.app/Contents/Resources/MetaNuke.icns',
+    icon='assets/MetaNuke.icns',
     bundle_identifier='com.metanuke.app',
     info_plist={
         'CFBundleName': 'Meta Nuke',
         'CFBundleDisplayName': 'Meta Nuke',
-        'CFBundleShortVersionString': '1.2.0',
+        'CFBundleShortVersionString': '1.5.0',
         'CFBundleVersion': '3',
         'NSHighResolutionCapable': True,
         'NSRequiresAquaSystemAppearance': False,

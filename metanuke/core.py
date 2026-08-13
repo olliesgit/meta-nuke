@@ -40,6 +40,31 @@ except ImportError:
 
 # Cache the sRGB ICC profile as a module singleton.
 _SRGB_PROFILE = None
+
+# TIFF IFD tag IDs that carry metadata — used by both the binary stripper
+# (_strip_tiff_metadata) and the structural verifier (_verify_tiff_structure).
+TIFF_METADATA_TAGS = {
+    0x00FE,   # NewSubfileType (sub-file classification)
+    0x010D,   # DocumentName
+    0x010E,   # ImageDescription
+    0x010F,   # Make
+    0x0110,   # Model
+    0x0112,   # Orientation
+    0x0131,   # Software
+    0x0132,   # DateTime
+    0x013B,   # Artist
+    0x013C,   # HostComputer
+    0x013D,   # Predictor
+    0x014A,   # SubIFDs
+    0x0213,   # YCbCrPositioning
+    0x8298,   # Copyright
+    0x8769,   # EXIF IFD pointer
+    0x8825,   # GPS IFD pointer
+    0xA002,   # PixelXDimension
+    0xA003,   # PixelYDimension
+    0xA005,   # Interop IFD pointer
+}
+
 def _get_srgb_profile():
     global _SRGB_PROFILE
     if _SRGB_PROFILE is None:
@@ -246,7 +271,8 @@ class MetaNuke:
             if path.suffix.lower() == '.gif':
                 with Image.open(file_path) as probe:
                     if getattr(probe, 'n_frames', 1) > 1:
-                        return MetaNuke._nuke_animated_gif(file_path)
+                        return MetaNuke._nuke_animated_gif(
+                            file_path, output_path=output_path, rename=rename)
 
             # SVG is XML-based, not pixel-based
             if path.suffix.lower() == '.svg':
@@ -686,21 +712,39 @@ class MetaNuke:
             return False, f"Error processing PDF {file_path}: {str(e)}"
 
     @staticmethod
-    def _nuke_animated_gif(file_path: str) -> tuple[bool, str]:
-        """Strip metadata from an animated GIF without touching animation."""
+    def _nuke_animated_gif(file_path: str, output_path: str = None,
+                           rename: bool = False) -> tuple[bool, str]:
+        """Strip metadata from an animated GIF without touching animation.
+
+        Animated GIFs are the one format that cannot be pixel-reconstructed
+        without flattening the animation, so the metadata strip happens at the
+        binary level only (comment + application extension blocks). Honours
+        --output and --rename like every other format.
+        """
         try:
             path = Path(file_path)
             with open(file_path, 'rb') as f:
                 raw = f.read()
             buffer = MetaNuke._strip_gif_metadata(io.BytesIO(raw))
             buffer.seek(0)
-            MetaNuke._atomic_write(file_path, buffer.read())
-            MetaNuke._strip_xattrs(file_path)
-            MetaNuke._reset_file_timestamps(file_path)
-            success, verify_msg = MetaNuke._verify_clean(file_path)
+            data = buffer.read()
+            if output_path:
+                out_dir = Path(output_path)
+                out_dir.mkdir(parents=True, exist_ok=True)
+                if rename:
+                    final_hash = MetaNuke._sha256_from_buffer(buffer)
+                    write_path = str(out_dir / f"{final_hash[:16]}.gif")
+                else:
+                    write_path = str(out_dir / path.name)
+            else:
+                write_path = file_path
+            MetaNuke._atomic_write(write_path, data)
+            MetaNuke._strip_xattrs(write_path)
+            MetaNuke._reset_file_timestamps(write_path)
+            success, verify_msg = MetaNuke._verify_clean(write_path)
             if not success:
                 return False, f"Verification failed: {verify_msg}"
-            final_size = os.path.getsize(file_path)
+            final_size = os.path.getsize(write_path)
             return True, f"NUKED (animated): {path.name} ({final_size} bytes)"
         except Exception as e:
             return False, f"Error processing {file_path}: {str(e)}"
@@ -860,31 +904,12 @@ class MetaNuke:
         # Identify TIFF IFD byte ranges that contain standard metadata tags.
         # We don't try to rewrite IFDs — just strip the tags we know about
         # so verification can assert they're gone.
-        known_metadata_tags = {
-            0x00FE,   # ImageDescription
-            0x010D,   # DocumentName
-            0x010E,   # ImageDescription
-            0x010F,   # Make
-            0x0110,   # Model
-            0x0112,   # Orientation
-            0x0131,   # Software
-            0x0132,   # DateTime
-            0x013B,   # Artist
-            0x013C,   # HostComputer
-            0x013D,   # Predictor
-            0x014A,   # SubIFDs
-            0x0213,   # YCbCrPositioning
-            0x8298,   # Copyright
-            0x8769,   # EXIF IFD pointer
-            0x8825,   # GPS IFD pointer
-            0xA002,   # PixelXDimension
-            0xA003,   # PixelYDimension
-            0xA005,   # Interop IFD pointer
-        }
-        # If these tags are present in the raw data, we zero them out
-        # by replacing their tag ID with a 0x0001 (reserved, unused).
-        # This prevents binary-level detectors from finding them while
-        # keeping the IFD structure valid.
+        known_metadata_tags = TIFF_METADATA_TAGS
+        # If these tags are present in the raw data, we zero them out by
+        # replacing their tag ID with 0x0000 (unused, skipped by readers) AND
+        # scrubbing the value bytes — zeroing only the ID leaves the ASCII
+        # payload ("Adobe Photoshop 24.0", author names, etc.) recoverable
+        # from the raw file, which defeats the whole purpose.
         result = bytearray(data)
         pos = 4 if magic == 42 else 8  # IFD0 location
         if magic == 42:
@@ -917,8 +942,12 @@ class MetaNuke:
                 except struct.error:
                     continue
                 if tag in known_metadata_tags:
-                    # Zero out the tag ID to effectively delete it
-                    result[entry_start:entry_start+2] = b'\x00\x00' if order == '<' else b'\x00\x00'
+                    # Zero the tag ID to make the entry inert, then scrub the
+                    # value bytes (inline or at their offset) so no recoverable
+                    # string remains anywhere in the file.
+                    result[entry_start:entry_start+2] = b'\x00\x00'
+                    MetaNuke._zero_tiff_entry_value(
+                        result, data, entry_start, order, magic)
             # Move to next IFD
             next_offset_offset = current_offset + 2 + num_entries * entry_size
             if next_offset_offset + (4 if magic == 42 else 8) > len(data):
@@ -936,6 +965,41 @@ class MetaNuke:
             if current_offset == 0:
                 break
         return io.BytesIO(bytes(result))
+
+    @staticmethod
+    def _zero_tiff_entry_value(result: bytearray, data: bytes,
+                               entry_start: int, order: str, magic: int):
+        """Zero the value bytes of a TIFF IFD entry (inline or at offset).
+
+        The IFD structure itself is left intact; only the tag ID (zeroed by
+        the caller) and the payload bytes are destroyed.
+        """
+        try:
+            if magic == 42:  # classic TIFF: type(2) count(4) value(4)
+                ftype = struct.unpack(order + 'H', data[entry_start+2:entry_start+4])[0]
+                count = struct.unpack(order + 'I', data[entry_start+4:entry_start+8])[0]
+                value_pos = entry_start + 8
+                inline = 4
+            else:  # BigTIFF: type(2) count(8) value(8)
+                ftype = struct.unpack(order + 'H', data[entry_start+2:entry_start+4])[0]
+                count = struct.unpack(order + 'Q', data[entry_start+4:entry_start+12])[0]
+                value_pos = entry_start + 12
+                inline = 8
+        except struct.error:
+            return
+        type_size = {1: 1, 2: 1, 3: 2, 4: 4, 5: 8, 6: 1, 7: 1, 8: 2,
+                     9: 4, 10: 8, 11: 4, 12: 8, 13: 4, 16: 8, 17: 8, 18: 8}
+        nbytes = count * type_size.get(ftype, 1)
+        if nbytes <= inline:
+            result[value_pos:value_pos + inline] = b'\x00' * inline
+            return
+        try:
+            offset = struct.unpack(order + ('I' if magic == 42 else 'Q'),
+                                   data[value_pos:value_pos + inline])[0]
+        except struct.error:
+            return
+        if 0 <= offset < len(result) and offset + nbytes <= len(result):
+            result[offset:offset + nbytes] = b'\x00' * nbytes
 
     @staticmethod
     def _add_forensic_noise(image: Image.Image, raw_bytes: bytes,
@@ -1060,10 +1124,19 @@ class MetaNuke:
 
     @staticmethod
     def _reset_file_timestamps(file_path: str):
-        """Reset file timestamps to current time."""
+        """Reset file timestamps to a randomised recent wall-clock time.
+
+        Stamping every file with the *identical* current second is itself a
+        forensic fingerprint ("batch-processed by a cleaning tool"). Jittering
+        each file within the last few minutes makes a cleaned set look
+        hand-touched while still defeating timeline analysis.
+        """
         try:
             current_time = time.time()
-            os.utime(file_path, (current_time, current_time))
+            # 0-300s of jitter, drawn from the same CSPRNG as the noise.
+            jitter = int.from_bytes(os.urandom(2), 'big') / 65535 * 300
+            stamp = current_time - jitter
+            os.utime(file_path, (stamp, stamp))
         except Exception:
             pass
 
@@ -1201,6 +1274,49 @@ class MetaNuke:
         ]:
             if pat in haystack:
                 return f"TIFF metadata found: {name}"
+        # Structural check: walk the IFD chain and fail on any surviving
+        # known metadata tag ID (Make, Model, Software, EXIF/GPS pointers...).
+        try:
+            if magic == 42:
+                ifd_offset = struct.unpack(order + 'I', data[4:8])[0]
+                entry_size, next_len = 12, 4
+            else:
+                ifd_offset = struct.unpack(order + 'Q', data[8:16])[0]
+                entry_size, next_len = 20, 8
+        except struct.error:
+            return None
+        known_tags = TIFF_METADATA_TAGS
+        current = ifd_offset
+        visited = set()
+        while 8 <= current < len(data) - 2:
+            if current in visited:
+                break
+            visited.add(current)
+            try:
+                num = struct.unpack(order + 'H', data[current:current+2])[0]
+            except struct.error:
+                break
+            for i in range(num):
+                entry = current + 2 + i * entry_size
+                if entry + entry_size > len(data):
+                    break
+                try:
+                    tag = struct.unpack(order + 'H', data[entry:entry+2])[0]
+                except struct.error:
+                    continue
+                if tag in known_tags:
+                    return f"TIFF metadata tag survives: 0x{tag:04X}"
+            next_off = current + 2 + num * entry_size
+            if next_off + next_len > len(data):
+                break
+            try:
+                current = struct.unpack(
+                    order + ('Q' if magic == 43 else 'I'),
+                    data[next_off:next_off + next_len])[0]
+            except struct.error:
+                break
+            if current == 0:
+                break
         return None
 
     @staticmethod

@@ -1,0 +1,44 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    name: Python ${{ matrix.python }} · ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        python: ['3.9', '3.10', '3.11', '3.12']
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: Install exiftool (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libimage-exiftool-perl
+
+      - name: Install exiftool (macOS)
+        if: runner.os == 'macOS'
+        run: brew install exiftool
+
+      - name: Install dependencies
+        run: |
+          pip install --quiet Pillow
+          # Optional-format deps so the full suite (PDF/HEIC) runs
+          pip install --quiet pillow-heif PyMuPDF tqdm numpy
+
+      - name: Run smoke tests (incl. exiftool verification)
+        run: python tests/test_smoke.py
+
+      - name: Verify CLI entry point works
+        run: |
+          python meta_nuke.py --version
+          python -m metanuke.cli --version

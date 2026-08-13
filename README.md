@@ -2,7 +2,8 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.9+](https://img.shields.io/badge/python-3.9%2B-blue.svg)](https://www.python.org/downloads/)
-[![Version](https://img.shields.io/badge/version-1.4.0-brightgreen.svg)](https://github.com/olliesgit/meta-nuke)
+[![Version](https://img.shields.io/badge/version-1.5.0-brightgreen.svg)](https://github.com/olliesgit/meta-nuke)
+[![CI](https://github.com/olliesgit/meta-nuke/actions/workflows/ci.yml/badge.svg)](https://github.com/olliesgit/meta-nuke/actions/workflows/ci.yml)
 [![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-lightgrey.svg)](https://github.com/olliesgit/meta-nuke)
 [![Offline](https://img.shields.io/badge/network-100%25%20offline-success.svg)](https://github.com/olliesgit/meta-nuke)
 [![GitHub issues](https://img.shields.io/github/issues/olliesgit/meta-nuke)](https://github.com/olliesgit/meta-nuke/issues)
@@ -68,7 +69,7 @@ Or with a file:
 |**Forensic Countermeasures:**
 |- Per-pixel CSPRNG noise injection (±1–3, gated ~25% of pixels at default level 5)
 |- JPEG double-encode with random quantization tables (quality 91–96) to mask tool fingerprint
-|- Filesystem timestamp analysis defeated (zeroed to wall-clock time)
+|- Filesystem timestamp analysis defeated (randomised within last 0–300s per file, so a cleaned batch doesn't share one tell-tale identical timestamp)
 |- xattr stripping (macOS quarantine, Spotlight comments, Finder labels)
 |- Configurable noise level 0–10 (0 = lossless, no perturbation)
 
@@ -179,12 +180,22 @@ regardless of the host's Tcl/Tk.
 
 ## 🧪 Verification
 
-After nuking, verify with:
+Every file is verified structurally after nuking (JPEG/PNG/GIF/TIFF/WebP
+parsers confirm no metadata segments survive), and TIFF IFD values are
+scrubbed at the byte level so editor fingerprints like `Adobe Photoshop 24.0`
+are unrecoverable.
 
 ```bash
 exiftool image.jpg       # Should show minimal/no metadata
-python tests/test_smoke.py  # 98 smoke tests (no external deps)
+python tests/test_smoke.py  # 133 smoke tests (no external deps)
 ```
+
+## 🔄 Development
+
+- **CI**: every push/PR runs the full suite on Ubuntu + macOS, Python 3.9–3.12,
+  including live `exiftool` verification — see `.github/workflows/ci.yml`.
+- **Releases**: pushing a `v*` tag builds the standalone `Meta Nuke.app` on a
+  macOS runner and attaches it to the GitHub release.
 
 ---
 

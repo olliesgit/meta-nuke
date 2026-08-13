@@ -712,6 +712,83 @@ def test_tiff_stripping(tmp: Path) -> None:
         check("TIFF opens, size preserved", img.size == (100, 80), detail=f"size={img.size}")
 
 
+def test_tiff_value_bytes_scrubbed(tmp: Path) -> None:
+    """TIFF metadata VALUE bytes must not survive the binary-level strip.
+
+    Zeroing only the IFD tag ID leaves the ASCII payload ("Adobe Photoshop
+    24.0", artist names) recoverable from the raw file. The strip must scrub
+    the values too.
+    """
+    print("test_tiff_value_bytes_scrubbed")
+    import io as _io
+    from metanuke.core import MetaNuke as _MN
+
+    # Build a TIFF buffer that carries metadata strings (as a camera/editor
+    # tool would) and feed it straight to the binary stripper, bypassing
+    # pixel reconstruction, to prove the strip pass itself is airtight.
+    img = Image.new('RGB', (100, 80), (200, 100, 50))
+    buf = _io.BytesIO()
+    img.save(buf, format='TIFF', compression='none',
+             software='Adobe Photoshop 24.0', artist='Jane Doe',
+             description='leaky desc')
+    buf.seek(0)
+    before = buf.read()
+    check("input carries Photoshop string", b'Adobe Photoshop 24.0' in before)
+    check("input carries artist string", b'Jane Doe' in before)
+
+    stripped = _MN._strip_tiff_metadata(_io.BytesIO(before))
+    after = stripped.read()
+    check("Photoshop string scrubbed", b'Adobe Photoshop 24.0' not in after)
+    check("artist string scrubbed", b'Jane Doe' not in after)
+    check("description string scrubbed", b'leaky desc' not in after)
+
+    # End-to-end through nuke_image as well.
+    src = tmp / "leak.tiff"
+    img.save(src, format='TIFF', compression='none',
+             software='Adobe Photoshop 24.0', artist='Jane Doe',
+             description='leaky desc')
+    ok, msg = MetaNuke.nuke_image(str(src), noise_level=0)
+    check("nuke succeeded", ok, detail=msg)
+    after2 = src.read_bytes()
+    check("e2e: Photoshop string gone", b'Adobe Photoshop 24.0' not in after2)
+    with Image.open(src) as img2:
+        check("scrubbed TIFF still opens", img2.size == (100, 80))
+
+
+def test_animated_gif_output_dir(tmp: Path) -> None:
+    """Animated GIF + --output must write to the output dir, not in place."""
+    print("test_animated_gif_output_dir")
+    src = tmp / "anim.gif"
+    f1 = Image.new('RGB', (50, 40), (255, 0, 0))
+    f2 = Image.new('RGB', (50, 40), (0, 255, 0))
+    f1.save(src, format='GIF', save_all=True, append_images=[f2],
+            duration=100, loop=0, comment='leaky comment')
+    before = src.read_bytes()
+
+    out_dir = tmp / "out"
+    ok, msg = MetaNuke.nuke_image(str(src), noise_level=0,
+                                  output_path=str(out_dir))
+    check("nuke succeeded", ok, detail=msg)
+
+    out_file = out_dir / "anim.gif"
+    check("output written to out dir", out_file.exists())
+    check("original untouched", src.read_bytes() == before)
+    with Image.open(out_file) as img:
+        frames_now = getattr(img, 'n_frames', 1)
+        check("animation preserved", frames_now == 2,
+              detail=f"frames={frames_now}")
+    check("comment stripped", not has_gif_comment_block(out_file.read_bytes()))
+
+    # --rename in output mode gets a content-hash filename
+    ok2, msg2 = MetaNuke.nuke_image(str(src), noise_level=0,
+                                    output_path=str(out_dir), rename=True)
+    check("rename nuke succeeded", ok2, detail=msg2)
+    hashed = [f for f in out_dir.iterdir() if f.suffix == '.gif'
+              and f.name != 'anim.gif']
+    check("rename produced hash filename", len(hashed) == 1,
+          detail=str([f.name for f in out_dir.iterdir()]))
+
+
 def test_exiftool_verify(tmp: Path) -> None:
     """If exiftool is on PATH, verify that a nuked JPEG has zero metadata."""
     print("test_exiftool_verify")
@@ -827,6 +904,8 @@ def main() -> int:
             test_backup_flag,
             test_unsupported_save_no_dataloss,
             test_tiff_stripping,
+            test_tiff_value_bytes_scrubbed,
+            test_animated_gif_output_dir,
             test_exiftool_verify,
             test_strict_mode,
             test_rename_flag,

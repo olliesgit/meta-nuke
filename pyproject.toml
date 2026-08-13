@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "meta-nuke"
-version = "1.4.0"
+version = "1.5.0"
 description = "Forensically-safe offline metadata stripper"
 readme = "README.md"
 license = {text = "MIT"}

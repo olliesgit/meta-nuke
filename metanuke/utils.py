@@ -68,7 +68,11 @@ def show_preview_collect(files: list[str]):
 
 
 def collect_files(paths, recursive=False):
-    """Collect all supported image files from paths (files or directories)."""
+    """Collect all supported image files from paths (files or directories).
+
+    Deduplicates so the same file passed twice (e.g. via FILE + --dir, or an
+    overlapping directory) is only processed once.
+    """
     files = []
     for p in paths:
         p = Path(p)
@@ -80,7 +84,8 @@ def collect_files(paths, recursive=False):
             for f in sorted(p.glob(glob)):
                 if f.is_file() and f.suffix.lower() in MetaNuke.SUPPORTED_FORMATS:
                     files.append(str(f))
-    return files
+    # dict.fromkeys preserves order and drops duplicates.
+    return list(dict.fromkeys(files))
 
 
 def log_results(log_path: str, results: list):
