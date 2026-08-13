@@ -8,6 +8,9 @@ jobs:
   build-macos-app:
     name: Build standalone macOS app
     runs-on: macos-latest
+    # Explicitly request write access — the repo default may be read-only.
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
 
