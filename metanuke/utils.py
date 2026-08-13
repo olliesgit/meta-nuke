@@ -7,6 +7,7 @@ from pathlib import Path
 
 from PIL import Image
 
+from metanuke import __version__
 from metanuke.core import MetaNuke
 
 
@@ -21,8 +22,9 @@ BANNER = r"""
 
 
 def print_banner():
-    """Print the ASCII art logo."""
+    """Print the ASCII art logo with the current version."""
     print(BANNER)
+    print(f"Meta Nuke v{__version__}")
     print("Forensically-safe offline metadata stripper")
     print("100% local  ·  100% offline  ·  Zero traces left")
     print()

@@ -540,6 +540,19 @@ def test_banner_constants(_=None):
     check("banner is multi-line", lines >= 5,
           detail=f"only {lines} lines")
 
+    # print_banner must include the current version so the banner can't
+    # drift from __version__ without a test failure.
+    import contextlib
+    import io
+    from metanuke import __version__
+    from metanuke.utils import print_banner
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        print_banner()
+    check("banner includes current version",
+          f"Meta Nuke v{__version__}" in out.getvalue(),
+          detail=f"banner missing v{__version__}")
+
 
 def test_collect_files_recursive(tmp: Path) -> None:
     """Test recursive file collection."""
