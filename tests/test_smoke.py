@@ -725,6 +725,31 @@ def test_tiff_stripping(tmp: Path) -> None:
         check("TIFF opens, size preserved", img.size == (100, 80), detail=f"size={img.size}")
 
 
+def test_dng_stripping(tmp: Path) -> None:
+    """DNG (TIFF-based RAW) must be nuked via the TIFF path."""
+    print("test_dng_stripping")
+    src = tmp / "raw.dng"
+    # Build a TIFF-with-metadata file under the .dng extension (Pillow opens
+    # DNGs as TIFF, so this exercises the real code path).
+    img = Image.new('RGB', (100, 80), (5, 120, 250))
+    img.save(src, format='TIFF', compression='none',
+             software='Adobe Photoshop 24.0', artist='Jane Doe')
+
+    ok, msg = MetaNuke.nuke_image(str(src), noise_level=0)
+    check("dng nuke succeeded", ok, detail=msg)
+
+    after = src.read_bytes()
+    check("dng extension preserved", src.suffix == '.dng')
+    check("dng has no metadata tags",
+          len(has_tiff_metadata_tags(after)) == 0,
+          detail=str(has_tiff_metadata_tags(after)))
+    check("dng value bytes scrubbed", b'Adobe Photoshop 24.0' not in after)
+    with Image.open(src) as img2:
+        check("dng opens, size preserved", img2.size == (100, 80))
+    okv, msgv = MetaNuke._verify_clean(str(src))
+    check("dng verification passes", okv, detail=msgv)
+
+
 def test_tiff_value_bytes_scrubbed(tmp: Path) -> None:
     """TIFF metadata VALUE bytes must not survive the binary-level strip.
 
@@ -917,6 +942,7 @@ def main() -> int:
             test_backup_flag,
             test_unsupported_save_no_dataloss,
             test_tiff_stripping,
+            test_dng_stripping,
             test_tiff_value_bytes_scrubbed,
             test_animated_gif_output_dir,
             test_exiftool_verify,

@@ -42,6 +42,7 @@ Or with a file:
 | `.gif` | Comment blocks, app extensions |
 | `.bmp` | Minimal metadata, full strip |
 | `.tiff` / `.tif` | IFD metadata stripped |
+| `.dng` | Adobe RAW (TIFF-based) — IFD metadata stripped, valid baseline DNG out |
 | `.webp` | EXIF, ICC stripped |
 | `.svg` | `<metadata>`, `<desc>`, `<title>`, XML comments, namespaces |
 | `.avif` | Via Pillow 10+ |

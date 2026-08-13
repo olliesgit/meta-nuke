@@ -84,7 +84,7 @@ class MetaNuke:
     """Nuclear-grade metadata stripper - strips EVERYTHING including color profiles."""
 
     SUPPORTED_FORMATS = {'.jpg', '.jpeg', '.png', '.gif', '.bmp', '.tiff', '.tif',
-                          '.webp', '.svg', '.avif'}
+                          '.dng', '.webp', '.svg', '.avif'}
     if HEIF_AVAILABLE:
         SUPPORTED_FORMATS.update({'.heic', '.heif'})
     if PDF_AVAILABLE:
@@ -167,8 +167,8 @@ class MetaNuke:
                     result['binary_markers'].append(label)
                     result['marker_details'].append(detail)
 
-        # TIFF-specific
-        if result['format'] in ('.tiff', '.tif'):
+        # TIFF-specific (DNG is TIFF-based, same metadata tags)
+        if result['format'] in ('.tiff', '.tif', '.dng'):
             if b'ImageDescription' in raw:
                 result['binary_markers'].append('ImageDescription')
                 result['marker_details'].append('TIFF image description')
@@ -372,7 +372,9 @@ class MetaNuke:
                 clean_image.info = {}
                 clean_image.save(buffer, format='BMP')
 
-            elif ext in ('.tiff', '.tif'):
+            elif ext in ('.tiff', '.tif', '.dng'):
+                # DNG is TIFF-based: pixel-reconstruct + TIFF re-save yields a
+                # valid baseline DNG with zero metadata.
                 clean_image.info = {}
                 clean_image.save(buffer, format='TIFF', compression='none')
                 buffer.seek(0)
@@ -1181,7 +1183,7 @@ class MetaNuke:
                 result = MetaNuke._verify_webp_structure(raw_data)
                 if result:
                     return False, result
-            elif ext in ('.tiff', '.tif'):
+            elif ext in ('.tiff', '.tif', '.dng'):
                 result = MetaNuke._verify_tiff_structure(raw_data)
                 if result:
                     return False, result
